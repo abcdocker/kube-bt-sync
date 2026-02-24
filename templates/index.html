@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>kube-bt-sync 控制台</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .yaml-editor { font-family: monospace; font-size: 14px; width: 100%; height: 350px; background-color: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; border: none; outline: none; resize: vertical;}
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <h2>🚀 kube-bt-sync 边缘网关同步中心</h2>
+            <el-button type="primary" @click="openDialog"> + 暴露新服务</el-button>
+        </div>
+
+        <el-card class="box-card">
+            <template #header>
+                <div class="card-header">
+                    <span>已托管路由状态</span>
+                    <el-button style="float: right; padding: 3px 0" text @click="fetchStatus">刷新数据</el-button>
+                </div>
+            </template>
+            <el-table :data="statusList" style="width: 100%" v-loading="loading">
+                <el-table-column prop="namespace" label="命名空间" width="120"></el-table-column>
+                <el-table-column prop="name" label="资源名称" width="180"></el-table-column>
+                <el-table-column prop="domain" label="访问域名">
+                    <template #default="scope">
+                        <el-link type="primary" :href="'https://'+scope.row.domain" target="_blank">{{ scope.row.domain }}</el-link>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="ddnsPort" label="DDNS 端口" width="120">
+                    <template #default="scope"><el-tag type="warning">{{ scope.row.ddnsPort }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="status" label="状态" width="100">
+                    <template #default="scope"><el-tag type="success">{{ scope.row.status }}</el-tag></template>
+                </el-table-column>
+            </el-table>
+        </el-card>
+
+        <el-dialog v-model="dialogVisible" title="配置 Ingress 规则" width="650px" destroy-on-close>
+            <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+                <el-tab-pane label="📝 表单模式 (新手友好)" name="form">
+                    <el-form :model="form" label-width="120px" style="margin-top: 15px;">
+                        <el-form-item label="规则名称"><el-input v-model="form.name"></el-input></el-form-item>
+                        <el-form-item label="业务域名"><el-input v-model="form.domain" placeholder="如: app.i4t.com"></el-input></el-form-item>
+                        <el-form-item label="后端 Service"><el-input v-model="form.serviceName"></el-input></el-form-item>
+                        <el-form-item label="后端端口"><el-input-number v-model="form.servicePort" :min="1"></el-input-number></el-form-item>
+                        <el-form-item label="指定 DDNS 端口"><el-input v-model="form.customPort" placeholder="留空使用全局配置"></el-input></el-form-item>
+                    </el-form>
+                </el-tab-pane>
+                <el-tab-pane label="💻 YAML 模式 (极客专属)" name="yaml">
+                    <el-alert title="您可以直接在此修改 YAML 结构，提交后将原样应用到 K8s。" type="warning" :closable="false" style="margin-bottom: 10px;"></el-alert>
+                    <textarea v-model="yamlContent" class="yaml-editor" spellcheck="false"></textarea>
+                </el-tab-pane>
+            </el-tabs>
+            <template #footer>
+                <el-button @click="dialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="submitConfig" :loading="submitLoading">下发配置</el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        const app = createApp({
+            setup() {
+                const statusList = ref([]);
+                const loading = ref(false);
+                const submitLoading = ref(false);
+                const dialogVisible = ref(false);
+                const activeTab = ref('form');
+                const yamlContent = ref('');
+
+                const form = ref({
+                    name: 'my-app-ingress', namespace: 'default', domain: 'app.i4t.com',
+                    serviceName: 'my-svc', servicePort: 80, customPort: ''
+                });
+
+                const fetchStatus = () => {
+                    loading.value = true;
+                    fetch('/api/status').then(res => res.json()).then(data => {
+                        statusList.value = data || []; loading.value = false;
+                    });
+                };
+
+                const generateYamlFromForm = () => {
+                    const ingress = {
+                        apiVersion: 'networking.k8s.io/v1', kind: 'Ingress',
+                        metadata: {
+                            name: form.value.name, namespace: form.value.namespace,
+                            annotations: { 'kubernetes.io/ingress.class': 'nginx', 'i4t.com/baota-sync': 'true' }
+                        },
+                        spec: { rules: [{
+                            host: form.value.domain,
+                            http: { paths: [{
+                                path: '/', pathType: 'Prefix',
+                                backend: { service: { name: form.value.serviceName, port: { number: form.value.servicePort } } }
+                            }]}
+                        }]}
+                    };
+                    if (form.value.customPort) { ingress.metadata.annotations['i4t.com/ddns-port'] = form.value.customPort; }
+                    yamlContent.value = jsyaml.dump(ingress);
+                };
+
+                const handleTabChange = (name) => {
+                    if (name === 'yaml') generateYamlFromForm();
+                };
+
+                const openDialog = () => {
+                    activeTab.value = 'form'; dialogVisible.value = true;
+                };
+
+                const submitConfig = () => {
+                    submitLoading.value = true;
+                    // 无论当前在哪个 Tab，最终提交的都是 YAML (如果停留在表单，先生成一下)
+                    if (activeTab.value === 'form') generateYamlFromForm();
+                    
+                    fetch('/api/ingress/yaml', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ yamlContent: yamlContent.value })
+                    }).then(res => res.json()).then(data => {
+                        submitLoading.value = false;
+                        if(data.error) { ElementPlus.ElMessage.error(data.error); } 
+                        else {
+                            ElementPlus.ElMessage.success(data.message);
+                            dialogVisible.value = false; fetchStatus();
+                        }
+                    });
+                };
+
+                onMounted(() => fetchStatus());
+                return { statusList, loading, fetchStatus, dialogVisible, activeTab, form, yamlContent, handleTabChange, submitConfig, submitLoading, openDialog };
+            }
+        });
+        app.use(ElementPlus); app.mount('#app');
+    </script>
+</body>
+</html>
