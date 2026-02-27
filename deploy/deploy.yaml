@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-bt-sync-sa
+  namespace: tools
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-bt-sync-role
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+# 【新增】获取 Namespace 和 Service 的权限
+- apiGroups: [""]
+  resources: ["services", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-bt-sync-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-bt-sync-role
+subjects:
+- kind: ServiceAccount
+  name: kube-bt-sync-sa
+  namespace: tools
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-bt-sync
+  namespace: tools
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-bt-sync
+  template:
+    metadata:
+      labels:
+        app: kube-bt-sync
+    spec:
+      serviceAccountName: kube-bt-sync-sa
+      containers:
+      - name: sync-server
+        image: harbor.frps.cn/kube-bt-sync-main/v2
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AUTH_USER
+          value: "admin"
+        - name: AUTH_PASSWORD
+          value: "i4t123456"
+        - name: BAOTA_URL
+          value: "http://你的公网IP:宝塔面板端口"
+        - name: BAOTA_API_KEY
+          value: "你的宝塔API_KEY"
+        - name: DDNS_HOST
+          value: "home.i4t.com"
+        - name: DEFAULT_PORT
+          value: "38333"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-bt-sync-svc
+  namespace: tools
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 31080
+  selector:
+    app: kube-bt-sync

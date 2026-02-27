@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>kube-bt-sync 控制台</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .yaml-editor { font-family: monospace; font-size: 14px; width: 100%; height: 350px; background-color: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; border: none; outline: none; resize: vertical;}
+        .check-card { height: 100%; }
+        .check-card p { margin: 8px 0; font-size: 14px; }
+        .code-block { background: #282c34; color: #abb2bf; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 12px; margin-top: 5px; word-break: break-all; }
+        .el-card__body { padding: 15px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="header">
+            <h2>🚀 kube-bt-sync 边缘网关同步中心</h2>
+            <el-button type="primary" @click="openDialog" size="large"> + 暴露新服务</el-button>
+        </div>
+
+        <el-row :gutter="20" style="margin-bottom: 20px; display: flex; align-items: stretch;">
+            <el-col :span="8">
+                <el-card shadow="hover" class="check-card">
+                    <template #header>
+                        <div style="font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+                            <span>🌐 云端宝塔节点</span>
+                            <el-button size="small" type="primary" plain @click="checkSystem" :loading="checking">刷新</el-button>
+                        </div>
+                    </template>
+                    <div v-if="sysStatus.baota">
+                        <p><strong>接口地址：</strong> {{ sysStatus.baota.url }}</p>
+                        <p><strong>连通状态：</strong> 
+                            <el-tag :type="sysStatus.baota.status === 'success' ? 'success' : 'danger'" size="small">
+                                {{ sysStatus.baota.status === 'success' ? '正常连通' : '连接失败' }}
+                            </el-tag>
+                        </p>
+                        <el-alert v-if="sysStatus.baota.status !== 'success'" :title="sysStatus.baota.msg" type="error" show-icon :closable="false" style="margin-top: 10px;"></el-alert>
+                    </div>
+                </el-card>
+            </el-col>
+
+            <el-col :span="8">
+                <el-card shadow="hover" class="check-card">
+                    <template #header><div style="font-weight: bold; padding: 4px 0;">🏠 家庭边缘节点 (DDNS)</div></template>
+                    <div v-if="sysStatus.ddns">
+                        <p><strong>DDNS 域名：</strong> {{ sysStatus.ddns.host || '未配置' }}</p>
+                        <p><strong>探测状态：</strong>
+                            <el-tag :type="sysStatus.ddns.status === 'success' ? 'success' : (sysStatus.ddns.status === 'warning' ? 'warning' : 'danger')" size="small">
+                                {{ sysStatus.ddns.msg }}
+                            </el-tag>
+                        </p>
+                        <div v-if="sysStatus.ddns.status === 'success' || sysStatus.ddns.status === 'warning'" style="margin-top: 10px; padding: 8px; background: #f0f9eb; border-radius: 4px; border: 1px solid #e1f3d8;">
+                            <span style="font-size: 13px; color: #67c23a; font-weight: bold;">📍 当前公网 IP：<br/>{{ sysStatus.ddns.ips.join(', ') }}</span>
+                        </div>
+                    </div>
+                </el-card>
+            </el-col>
+
+            <el-col :span="8">
+                <el-card shadow="hover" class="check-card">
+                    <template #header><div style="font-weight: bold; padding: 4px 0;">🚢 K8s 内部基础设施</div></template>
+                    <div v-if="sysStatus.k8s">
+                        <p><strong>MetalLB：</strong>
+                            <el-tag :type="sysStatus.k8s.metallbInstalled ? 'success' : 'danger'" size="small">
+                                {{ sysStatus.k8s.metallbInstalled ? '已安装并就绪' : '未检测到组件' }}
+                            </el-tag>
+                        </p>
+                        <p><strong>Ingress 控制器：</strong>
+                            <el-tag :type="sysStatus.k8s.ingressInstalled ? 'success' : 'danger'" size="small">
+                                {{ sysStatus.k8s.ingressInstalled ? '已安装并就绪' : '未检测到组件' }}
+                            </el-tag>
+                        </p>
+                    </div>
+                </el-card>
+            </el-col>
+        </el-row>
+
+        <el-card class="box-card">
+            <template #header>
+                <div class="card-header" style="display: flex; justify-content: space-between;">
+                    <span style="font-weight: bold;">📋 已托管路由状态</span>
+                    <el-button style="padding: 3px 0" text @click="() => fetchStatus(false)">刷新数据</el-button>
+                </div>
+            </template>
+            <el-table :data="statusList" style="width: 100%" v-loading="loading">
+                <el-table-column prop="namespace" label="命名空间" width="120"></el-table-column>
+                <el-table-column prop="name" label="资源名称" width="180"></el-table-column>
+                <el-table-column prop="domain" label="访问域名">
+                    <template #default="scope">
+                        <el-link :type="scope.row.scheme === 'https' ? 'success' : 'primary'" :href="scope.row.scheme + '://' + scope.row.domain" target="_blank">
+                            <span v-if="scope.row.scheme === 'https'">🔒 </span>
+                            {{ scope.row.scheme }}://{{ scope.row.domain }}
+                        </el-link>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="ddnsPort" label="内网出口" width="90">
+                    <template #default="scope"><el-tag type="info">{{ scope.row.ddnsPort }}</el-tag></template>
+                </el-table-column>
+                
+                <el-table-column prop="status" label="远端同步进度" width="240">
+                    <template #default="scope">
+                        <el-tag :type="scope.row.status.includes('未配置证书') ? 'danger' : (scope.row.status.includes('✅') ? 'success' : 'warning')" effect="dark">
+                            {{ scope.row.status }}
+                        </el-tag>
+                    </template>
+                </el-table-column>
+                
+                <el-table-column label="操作" width="120" align="center">
+                    <template #default="scope">
+                        <el-button type="danger" size="small" plain @click="prepareDelete(scope.row)">移除</el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-card>
+
+        <el-dialog v-model="dialogVisible" title="配置 Ingress 规则" width="650px" destroy-on-close>
+            <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+                <el-tab-pane label="📝 表单模式 (新手友好)" name="form">
+                    <el-form :model="form" label-width="120px" style="margin-top: 15px;">
+                        <el-form-item label="规则名称"><el-input v-model="form.name"></el-input></el-form-item>
+                        
+                        <el-form-item label="安全访问">
+                            <el-switch v-model="form.enableHttps" active-text="开启 HTTPS (TLS)" inactive-text="纯 HTTP 访问"></el-switch>
+                        </el-form-item>
+                        
+                        <el-form-item label="业务域名"><el-input v-model="form.domain" placeholder="如: app.i4t.com"></el-input></el-form-item>
+                        
+                        <el-form-item label="命名空间 (NS)">
+                            <el-select v-model="form.namespace" placeholder="请选择 Namespace" filterable style="width: 100%;" @change="handleNamespaceChange">
+                                <el-option v-for="ns in namespacesList" :key="ns" :label="ns" :value="ns"></el-option>
+                            </el-select>
+                        </el-form-item>
+                        
+                        <el-form-item label="后端 Service">
+                            <el-select v-model="form.serviceName" placeholder="请选择该 NS 下的 Service" filterable allow-create style="width: 100%;" @change="handleServiceChange">
+                                <el-option v-for="svc in filteredServices" :key="svc.name" :label="svc.name" :value="svc.name"></el-option>
+                            </el-select>
+                        </el-form-item>
+
+                        <el-form-item label="后端端口">
+                            <el-select v-model="form.servicePort" placeholder="选择或手填端口" filterable allow-create style="width: 100%;">
+                                <el-option v-for="p in availablePorts" :key="p" :label="p" :value="p">
+                                    <span style="float: left">{{ p }}</span>
+                                    <span style="float: right; color: #8492a6; font-size: 13px">自动探测</span>
+                                </el-option>
+                            </el-select>
+                        </el-form-item>
+
+                        <el-form-item label="指定 DDNS 端口"><el-input v-model="form.customPort" placeholder="留空使用全局配置"></el-input></el-form-item>
+                    </el-form>
+                </el-tab-pane>
+                <el-tab-pane label="💻 YAML 模式 (极客专属)" name="yaml">
+                    <el-alert title="您可以直接在此修改 YAML 结构，提交后将原样应用到 K8s。" type="warning" :closable="false" style="margin-bottom: 10px;"></el-alert>
+                    <textarea v-model="yamlContent" class="yaml-editor" spellcheck="false"></textarea>
+                </el-tab-pane>
+            </el-tabs>
+            <template #footer>
+                <el-button @click="dialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="submitConfig" :loading="submitLoading">下发配置</el-button>
+            </template>
+        </el-dialog>
+
+        <el-dialog v-model="deleteDialogVisible" title="⚠️ 删除路由确认" width="450px" destroy-on-close>
+            <div style="font-size: 15px; margin-bottom: 10px;">
+                确定要移除 Ingress <strong style="color: #f56c6c;">{{ deleteForm.name }}</strong> 吗？
+            </div>
+            <div style="background-color: #fdf6ec; padding: 15px; border-radius: 4px;">
+                <el-checkbox v-model="deleteForm.deleteBaota" border size="large">
+                    <span style="font-weight: bold;">同时清除宝塔云端面板对应的站点</span>
+                </el-checkbox>
+            </div>
+            <template #footer>
+                <el-button @click="deleteDialogVisible = false">取消</el-button>
+                <el-button type="danger" @click="confirmDelete" :loading="deleteLoading">确认删除</el-button>
+            </template>
+        </el-dialog>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+        const app = createApp({
+            setup() {
+                const statusList = ref([]);
+                const loading = ref(false);
+                const submitLoading = ref(false);
+                const dialogVisible = ref(false);
+                const activeTab = ref('form');
+                const yamlContent = ref('');
+                
+                const sysStatus = ref({ baota: null, k8s: null, ddns: null });
+                const checking = ref(false);
+                const namespacesList = ref([]);
+                const servicesList = ref([]);
+
+                const deleteDialogVisible = ref(false);
+                const deleteLoading = ref(false);
+                const deleteForm = ref({ namespace: '', name: '', domain: '', deleteBaota: true });
+
+                const form = ref({
+                    name: 'my-app-ingress', namespace: 'default', domain: 'app.i4t.com',
+                    serviceName: '', servicePort: '', customPort: '', enableHttps: true
+                });
+
+                const filteredServices = computed(() => {
+                    if (!form.value.namespace) return servicesList.value;
+                    return servicesList.value.filter(s => s.namespace === form.value.namespace);
+                });
+
+                const availablePorts = computed(() => {
+                    const selected = servicesList.value.find(s => s.name === form.value.serviceName && s.namespace === form.value.namespace);
+                    return selected && selected.ports ? selected.ports : [];
+                });
+
+                const handleNamespaceChange = () => { form.value.serviceName = ''; form.value.servicePort = ''; };
+                const handleServiceChange = () => { if (availablePorts.value.length > 0) { form.value.servicePort = availablePorts.value[0]; } else { form.value.servicePort = 80; } };
+
+                const fetchNamespacesAndServices = () => {
+                    fetch('/api/namespaces').then(res => res.json()).then(data => namespacesList.value = data || []);
+                    fetch('/api/services').then(res => res.json()).then(data => servicesList.value = data || []);
+                };
+
+                const checkSystem = () => {
+                    checking.value = true;
+                    fetch('/api/system/check').then(res => res.json()).then(data => {
+                        sysStatus.value = data; checking.value = false;
+                    }).catch(err => { ElementPlus.ElMessage.error('环境请求失败'); checking.value = false; });
+                };
+
+                const fetchStatus = (isAutoPolling = false) => {
+                    if (!isAutoPolling) loading.value = true;
+                    fetch('/api/status').then(res => res.json()).then(data => {
+                        statusList.value = data || []; 
+                        if (!isAutoPolling) loading.value = false;
+                        const hasPending = statusList.value.some(item => item.status.includes('⏳'));
+                        if (hasPending) { setTimeout(() => fetchStatus(true), 2000); }
+                    }).catch(() => { if (!isAutoPolling) loading.value = false; });
+                };
+
+                const generateYamlFromForm = () => {
+                    const secretName = form.value.domain.replace(/\./g, '-') + '-tls';
+                    const ingress = {
+                        apiVersion: 'networking.k8s.io/v1', kind: 'Ingress',
+                        metadata: { name: form.value.name, namespace: form.value.namespace, annotations: { 'kube-bt-sync.io/baota-sync': 'true' }},
+                        spec: { ingressClassName: 'nginx', rules: [{ host: form.value.domain, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name: form.value.serviceName, port: { number: Number(form.value.servicePort) } } } }]}}]}
+                    };
+                    if (form.value.enableHttps) { ingress.spec.tls = [{ hosts: [form.value.domain], secretName: secretName }]; }
+                    if (form.value.customPort) { ingress.metadata.annotations['kube-bt-sync.io/ddns-port'] = form.value.customPort; }
+                    yamlContent.value = jsyaml.dump(ingress);
+                };
+
+                const handleTabChange = (name) => { if (name === 'yaml') generateYamlFromForm(); };
+
+                const openDialog = () => { activeTab.value = 'form'; dialogVisible.value = true; fetchNamespacesAndServices(); };
+
+                const submitConfig = () => {
+                    submitLoading.value = true;
+                    if (activeTab.value === 'form') generateYamlFromForm();
+                    fetch('/api/ingress/yaml', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ yamlContent: yamlContent.value })
+                    }).then(res => res.json()).then(data => {
+                        submitLoading.value = false;
+                        if(data.error) { ElementPlus.ElMessage.error(data.error); } 
+                        else { ElementPlus.ElMessage.success(data.message); dialogVisible.value = false; fetchStatus(false); }
+                    });
+                };
+
+                const prepareDelete = (row) => { deleteForm.value = { namespace: row.namespace, name: row.name, domain: row.domain, deleteBaota: true }; deleteDialogVisible.value = true; };
+
+                const confirmDelete = () => {
+                    deleteLoading.value = true;
+                    fetch('/api/ingress/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(deleteForm.value) })
+                    .then(res => res.json()).then(data => {
+                        deleteLoading.value = false;
+                        if(data.error) { ElementPlus.ElMessage.error(data.error); } 
+                        else { ElementPlus.ElMessage.success(data.message); deleteDialogVisible.value = false; fetchStatus(false); }
+                    });
+                };
+
+                onMounted(() => { fetchStatus(); checkSystem(); });
+                
+                return { statusList, loading, fetchStatus, dialogVisible, activeTab, form, yamlContent, handleTabChange, submitConfig, submitLoading, openDialog, sysStatus, checking, checkSystem, namespacesList, servicesList, filteredServices, handleNamespaceChange, availablePorts, handleServiceChange, deleteDialogVisible, deleteLoading, deleteForm, prepareDelete, confirmDelete };
+            }
+        });
+        app.use(ElementPlus); app.mount('#app');
+    </script>
+</body>
+</html>
