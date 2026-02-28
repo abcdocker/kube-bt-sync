@@ -1,3 +1,7 @@
 kube-bt-sync
 .idea/
 .vscode/
+main
+kube-bt-sync
+mac
+*.exe
