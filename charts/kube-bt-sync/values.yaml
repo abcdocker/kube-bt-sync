@@ -1,0 +1,38 @@
+# 🚀 kube-bt-sync 核心配置
+app:
+  replicaCount: 1
+  image:
+    repository: harbor.frps.cn/kube-bt-sync-main
+    tag: v2
+    pullPolicy: Always
+
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 31080
+
+# 🔐 安全与环境配置
+config:
+  # 宝塔面板配置
+  baotaUrl: "http://你的公网IP:宝塔面板端口"
+  baotaApiKey: "你的宝塔API_KEY"
+  
+  # 家庭宽带 DDNS 配置
+  ddnsHost: "home.i4t.com"
+  defaultPort: "38333"
+  
+  # Web 仪表盘安全认证 (留空则不开启)
+  authUser: "admin"
+  authPassword: "your-secure-password"
+
+# ==========================================
+# 📦 底层依赖开关 (一键安装前置组件)
+# ==========================================
+ingress-nginx:
+  enabled: true  # 设为 true，Helm 会自动安装 Ingress 控制器
+  controller:
+    hostNetwork: true
+    kind: DaemonSet
+
+metallb:
+  enabled: true  # 设为 true，Helm 会自动安装 MetalLB

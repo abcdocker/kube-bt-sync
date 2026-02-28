@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.app.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      containers:
+      - name: sync-server
+        image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag }}"
+        imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+        ports:
+        - containerPort: 8080
+        env:
+        - name: BAOTA_URL
+          value: {{ .Values.config.baotaUrl | quote }}
+        - name: BAOTA_API_KEY
+          value: {{ .Values.config.baotaApiKey | quote }}
+        - name: DDNS_HOST
+          value: {{ .Values.config.ddnsHost | quote }}
+        - name: DEFAULT_PORT
+          value: {{ .Values.config.defaultPort | quote }}
+        {{- if .Values.config.authUser }}
+        - name: AUTH_USER
+          value: {{ .Values.config.authUser | quote }}
+        - name: AUTH_PASSWORD
+          value: {{ .Values.config.authPassword | quote }}
+        {{- end }}
