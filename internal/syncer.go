@@ -19,8 +19,12 @@ type ProxyTarget struct {
 }
 
 var syncedCache = make(map[string]string)
+// 【新增】专门用于存放实时执行进度的缓存字典
+var progressCache = make(map[string]string) 
 var cacheMutex sync.RWMutex
 var syncExecutionMutex sync.Mutex
+
+var loopCount int64 = 0
 
 func StartSyncer(k8sClient *kubernetes.Clientset, cfg Config) {
 	log.Printf("同步引擎启动 (间隔: %v)...", cfg.SyncInterval)
@@ -34,36 +38,56 @@ func TriggerSync(k8sClient *kubernetes.Clientset, cfg Config) {
 	go syncOnce(k8sClient, cfg)
 }
 
+// 【升级】状态查询逻辑：优先展示实时进度，如果没有进度再查是否已同步
 func GetSyncStatus(domain string, expectedURL string) string {
 	cacheMutex.RLock()
 	defer cacheMutex.RUnlock()
+	
+	// 1. 如果有正在执行的进度，优先展示动态进度
+	if progress, ok := progressCache[domain]; ok && progress != "" {
+		return progress
+	}
+	
+	// 2. 如果没有进度，说明执行完了，检查结果
 	if cachedURL, ok := syncedCache[domain]; ok {
 		if cachedURL == expectedURL {
 			return "✅ 已同步"
 		}
 	}
-	return "⏳ 同步中..."
+	return "⏳ 等待处理队列中..."
+}
+
+// 辅助方法：快速更新并暴露进度
+func updateProgress(domain string, msg string) {
+	cacheMutex.Lock()
+	if msg == "" {
+		delete(progressCache, domain) // 清理进度
+	} else {
+		progressCache[domain] = msg
+	}
+	cacheMutex.Unlock()
 }
 
 func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
-	if !syncExecutionMutex.TryLock() {
-		return 
-	}
+	if !syncExecutionMutex.TryLock() { return }
 	defer syncExecutionMutex.Unlock()
 
-	// 1. 获取宝塔所有存量站点，用于反向同步 (宝塔删除 -> 触发K8s删除)
+	loopCount++
+	shouldDeepCheck := (loopCount == 1 || loopCount%10 == 0)
+
 	baotaSites := make(map[string]bool)
 	baotaFetchSuccess := false
-	resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
-	if err == nil {
-		var res map[string]interface{}
-		if json.Unmarshal([]byte(resp), &res) == nil {
-			if dataArr, ok := res["data"].([]interface{}); ok {
-				baotaFetchSuccess = true
-				for _, item := range dataArr {
-					if site, ok := item.(map[string]interface{}); ok {
-						if name, ok := site["name"].(string); ok {
-							baotaSites[name] = true
+
+	if shouldDeepCheck {
+		resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
+		if err == nil {
+			var res map[string]interface{}
+			if json.Unmarshal([]byte(resp), &res) == nil {
+				if dataArr, ok := res["data"].([]interface{}); ok {
+					baotaFetchSuccess = true
+					for _, item := range dataArr {
+						if site, ok := item.(map[string]interface{}); ok {
+							if name, ok := site["name"].(string); ok { baotaSites[name] = true }
 						}
 					}
 				}
@@ -72,10 +96,7 @@ func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
 	}
 
 	ingresses, err := clientset.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		log.Printf("获取 Ingress 失败: %v", err)
-		return
-	}
+	if err != nil { return }
 
 	var targets []ProxyTarget
 	currentDomains := make(map[string]bool)
@@ -83,26 +104,23 @@ func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
 	for _, ing := range ingresses.Items {
 		if val, ok := ing.Annotations["kube-bt-sync.io/baota-sync"]; ok && val == "true" {
 			targetPort := cfg.DefaultPort
-			if customPort, hasCustom := ing.Annotations["kube-bt-sync.io/ddns-port"]; hasCustom && customPort != "" {
-				targetPort = customPort
-			}
+			if customPort, hasCustom := ing.Annotations["kube-bt-sync.io/ddns-port"]; hasCustom && customPort != "" { targetPort = customPort }
 
 			targetURL := fmt.Sprintf("http://%s:%s", cfg.DDNSHost, targetPort)
 			for _, rule := range ing.Spec.Rules {
 				if rule.Host != "" {
-					// 【核心升级】双向强一致性检测：之前同步成功过，但现在宝塔没这个站了！
 					cacheMutex.RLock()
 					_, existsInCache := syncedCache[rule.Host]
 					cacheMutex.RUnlock()
 
-					if existsInCache && baotaFetchSuccess && !baotaSites[rule.Host] {
-						log.Printf("[%s] 🚨 检测到宝塔端已删除该站点，触发反向同步清理 K8s Ingress...", rule.Host)
+					if shouldDeepCheck && existsInCache && baotaFetchSuccess && !baotaSites[rule.Host] {
+						updateProgress(rule.Host, "⏳ 宝塔端缺失，正在反向清理 K8s...")
 						clientset.NetworkingV1().Ingresses(ing.Namespace).Delete(context.TODO(), ing.Name, metav1.DeleteOptions{})
-						
 						cacheMutex.Lock()
 						delete(syncedCache, rule.Host)
 						cacheMutex.Unlock()
-						continue // 已经被删了，跳过本次处理
+						updateProgress(rule.Host, "") // 清除进度
+						continue
 					}
 
 					targets = append(targets, ProxyTarget{Domain: rule.Host, TargetURL: targetURL})
@@ -117,11 +135,11 @@ func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
 		cachedURL, exists := syncedCache[target.Domain]
 		cacheMutex.RUnlock()
 
-		if exists && cachedURL == target.TargetURL {
-			continue 
-		}
+		if exists && cachedURL == target.TargetURL { continue }
 
+		// 【核心升级】执行带实时进度反馈的底层操作
 		success := ensureBaotaSiteAndProxy(cfg, target)
+		
 		if success {
 			cacheMutex.Lock()
 			syncedCache[target.Domain] = target.TargetURL
@@ -131,13 +149,14 @@ func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
 			delete(syncedCache, target.Domain)
 			cacheMutex.Unlock()
 		}
+		
+		// 无论成功失败，结束时清空该域名的进度条显示
+		updateProgress(target.Domain, "")
 	}
 
 	cacheMutex.Lock()
 	for domain := range syncedCache {
-		if !currentDomains[domain] {
-			delete(syncedCache, domain)
-		}
+		if !currentDomains[domain] { delete(syncedCache, domain) }
 	}
 	cacheMutex.Unlock()
 }
@@ -146,6 +165,8 @@ func ensureBaotaSiteAndProxy(cfg Config, target ProxyTarget) bool {
 	webnameMap := map[string]interface{}{"domain": target.Domain, "domainlist": []string{}, "count": 0}
 	webnameJSON, _ := json.Marshal(webnameMap)
 
+	// 👉 进度 1
+	updateProgress(target.Domain, "⏳ [1/2] 正在调用 API 创建站点...")
 	CallBaotaAPI(cfg, "/site?action=AddSite", map[string]string{
 		"webname": string(webnameJSON),
 		"path":    "/www/wwwroot/" + target.Domain,
@@ -153,6 +174,12 @@ func ensureBaotaSiteAndProxy(cfg Config, target ProxyTarget) bool {
 		"ps":      "[kube-bt-sync]",
 	})
 
+	// 👉 进度 2：展示节流等待状态
+	updateProgress(target.Domain, "⏳ 防抖缓冲中 (防止 Nginx 假死)...")
+	time.Sleep(1500 * time.Millisecond)
+
+	// 👉 进度 3
+	updateProgress(target.Domain, "⏳ [2/2] 正在注入后端反向代理规则...")
 	resp, err := CallBaotaAPI(cfg, "/site?action=CreateProxy", map[string]string{
 		"sitename":  target.Domain,
 		"proxyname": "kube-bt-sync-proxy",
@@ -167,15 +194,18 @@ func ensureBaotaSiteAndProxy(cfg Config, target ProxyTarget) bool {
 	})
 
 	if err != nil {
-		log.Printf("[%s] 反代请求发送失败: %v", target.Domain, err)
+		updateProgress(target.Domain, "❌ 反代请求发送失败")
+		time.Sleep(2 * time.Second) // 停留两秒让用户看清报错
 		return false
-	} else if strings.Contains(resp, "已存在") {
-		return true
 	} else if strings.Contains(resp, "错误") || strings.Contains(resp, "失败") || strings.Contains(resp, "error") {
-		log.Printf("[%s] 宝塔API拒绝了反代请求: %s", target.Domain, resp)
+		updateProgress(target.Domain, "❌ 宝塔 API 拒绝请求")
+		time.Sleep(2 * time.Second)
 		return false
 	}
 
-	log.Printf("[%s] 反向代理配置成功同步！目标: %s", target.Domain, target.TargetURL)
+	// 👉 进度 4：收尾冷却期
+	updateProgress(target.Domain, "⏳ 触发面板平滑重载 (冷却 3s)...")
+	time.Sleep(3 * time.Second)
+
 	return true
 }
