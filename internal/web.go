@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net" // 引入 DNS 和 TCP 拨号探测
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -32,12 +32,16 @@ type DeleteRequest struct {
 func StartWebServer(k8sClient *kubernetes.Clientset, cfg Config) {
 	r := gin.Default()
 
+	// 🔒 安全拦截
 	authUser := os.Getenv("AUTH_USER")
 	authPass := os.Getenv("AUTH_PASSWORD")
 	if authUser != "" && authPass != "" {
 		r.Use(gin.BasicAuth(gin.Accounts{
 			authUser: authPass,
 		}))
+		log.Printf("🔒 已开启 Web 控制台安全认证 (用户: %s)", authUser)
+	} else {
+		log.Println("⚠️ 警告：未配置 AUTH_USER 和 AUTH_PASSWORD，控制台处于裸奔状态！")
 	}
 
 	r.Delims("[[", "]]")
@@ -97,12 +101,18 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 		}
 	}
 
-	k8sClient.NetworkingV1().Ingresses(req.Namespace).Delete(context.TODO(), req.Name, metav1.DeleteOptions{})
+	err := k8sClient.NetworkingV1().Ingresses(req.Namespace).Delete(context.TODO(), req.Name, metav1.DeleteOptions{})
+	if err != nil {
+		c.JSON(500, gin.H{"error": "删除 K8s Ingress 失败: " + err.Error()})
+		return
+	}
+
 	TriggerSync(k8sClient, cfg)
 	c.JSON(200, gin.H{"message": "路由删除成功！"})
 }
 
 func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
+	// 1. 检查宝塔
 	baotaStatus := "error"
 	baotaMsg := "未知错误"
 	resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
@@ -115,6 +125,7 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 		baotaMsg = "连接成功"
 	}
 
+	// 2. 检查 K8s 状态
 	ingressInstalled, metallbInstalled := false, false
 	deployments, err := k8sClient.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
 	if err == nil {
@@ -123,7 +134,27 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 			if strings.Contains(deploy.Name, "metallb") { metallbInstalled = true }
 		}
 	}
+	daemonsets, err := k8sClient.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
+	if err == nil {
+		for _, ds := range daemonsets.Items {
+			if strings.Contains(ds.Name, "ingress-nginx") { ingressInstalled = true }
+			if strings.Contains(ds.Name, "metallb") { metallbInstalled = true }
+		}
+	}
 
+	// 🌟 3. 获取真正的物理节点 LAN IP (局域网 Node IP)
+	var nodeIP string
+	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{}) // 已修复：移除错误的 ""
+	if err == nil && len(nodes.Items) > 0 {
+		for _, addr := range nodes.Items[0].Status.Addresses {
+			if addr.Type == "InternalIP" {
+				nodeIP = addr.Address
+				break 
+			}
+		}
+	}
+
+	// 4. DDNS 探测
 	ddnsStatus := "error"
 	ddnsMsg := "未配置 DDNS 域名或解析失败"
 	var resolvedIPs []string
@@ -135,7 +166,7 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 	if cleanDDNS != "" {
 		ips, err := net.LookupIP(cleanDDNS)
 		if err != nil {
-			ddnsMsg = "DNS 解析失败，请检查域名是否生效: " + err.Error()
+			ddnsMsg = "DNS 解析失败: " + err.Error()
 		} else {
 			for _, ip := range ips {
 				if ipv4 := ip.To4(); ipv4 != nil {
@@ -145,7 +176,6 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 			if len(resolvedIPs) == 0 {
 				ddnsMsg = "未解析到 IPv4 地址"
 			} else {
-				// 【核心升级】不仅测 DNS 解析，还要发起真实的 TCP 端口探测！
 				hostPort := fmt.Sprintf("%s:%s", cleanDDNS, cfg.DefaultPort)
 				conn, dialErr := net.DialTimeout("tcp", hostPort, 2*time.Second)
 				if dialErr == nil {
@@ -154,7 +184,7 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 					ddnsMsg = fmt.Sprintf("穿透端口 (%s) TCP 通信正常", cfg.DefaultPort)
 				} else {
 					ddnsStatus = "warning"
-					ddnsMsg = fmt.Sprintf("解析生效，但 TCP 端口 %s 不通(请检查路由器映射)", cfg.DefaultPort)
+					ddnsMsg = fmt.Sprintf("解析生效，但 TCP 端口 %s 不通(请检查映射)", cfg.DefaultPort)
 				}
 			}
 		}
@@ -162,13 +192,12 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 
 	c.JSON(200, gin.H{
 		"baota": gin.H{"status": baotaStatus, "msg": baotaMsg, "url": cfg.BaotaURL},
-		"k8s":   gin.H{"ingressInstalled": ingressInstalled, "metallbInstalled": metallbInstalled},
+		"k8s":   gin.H{"ingressInstalled": ingressInstalled, "metallbInstalled": metallbInstalled, "nodeIP": nodeIP},
 		"ddns":  gin.H{"status": ddnsStatus, "msg": ddnsMsg, "host": cfg.DDNSHost, "ips": resolvedIPs},
 	})
 }
 
 func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 【核心升级】查状态时顺便去宝塔查一下 SSL 证书是否开启
 	resp, _ := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
 	baotaSSL := make(map[string]bool)
 	var res map[string]interface{}
@@ -177,7 +206,6 @@ func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 			for _, item := range dataArr {
 				if site, ok := item.(map[string]interface{}); ok {
 					name, _ := site["name"].(string)
-					// 宝塔 SSL 字段：通常 > 0 表示已开启并配置了证书
 					if sslVal, ok := site["ssl"].(float64); ok && sslVal > 0 {
 						baotaSSL[name] = true
 					}
@@ -201,7 +229,6 @@ func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 			scheme := "http"
 			if len(ing.Spec.TLS) > 0 {
 				scheme = "https"
-				// 【防呆报警】K8s 要求 HTTPS，但宝塔没开 SSL！
 				if !baotaSSL[domain] && strings.Contains(syncStatus, "已同步") {
 					syncStatus += " (⚠️ 宝塔未配置证书)"
 				}
@@ -232,8 +259,14 @@ func handleGetServices(c *gin.Context, k8sClient *kubernetes.Clientset) {
 		for _, p := range svc.Spec.Ports {
 			ports = append(ports, p.Port)
 		}
+		
+		ip := svc.Spec.ClusterIP
+		if len(svc.Status.LoadBalancer.Ingress) > 0 {
+			ip = svc.Status.LoadBalancer.Ingress[0].IP
+		}
+
 		result = append(result, map[string]interface{}{
-			"name": svc.Name, "namespace": svc.Namespace, "ports": ports,
+			"name": svc.Name, "namespace": svc.Namespace, "ports": ports, "ip": ip,
 		})
 	}
 	c.JSON(200, result)

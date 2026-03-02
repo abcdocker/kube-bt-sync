@@ -1,4 +1,3 @@
-# 第一阶段：编译环境 (注意末尾的 AS builder)
 FROM docker.xuanyuan.run/library/golang:1.25.6 AS builder
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPROXY=https://goproxy.cn,direct
 WORKDIR /build

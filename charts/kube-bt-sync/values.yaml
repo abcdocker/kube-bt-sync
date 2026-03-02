@@ -1,9 +1,8 @@
-# 🚀 kube-bt-sync 核心配置
 app:
   replicaCount: 1
   image:
-    repository: harbor.frps.cn/kube-bt-sync-main
-    tag: v2
+    repository: harbor.frps.cn/kube-bt-sync-main/v1.6
+    tag: latest
     pullPolicy: Always
 
   service:
@@ -20,10 +19,6 @@ config:
   # 家庭宽带 DDNS 配置
   ddnsHost: "home.i4t.com"
   defaultPort: "38333"
-  
-  # Web 仪表盘安全认证 (留空则不开启)
-  authUser: "admin"
-  authPassword: "your-secure-password"
 
 # ==========================================
 # 📦 底层依赖开关 (一键安装前置组件)
@@ -33,6 +28,23 @@ ingress-nginx:
   controller:
     hostNetwork: true
     kind: DaemonSet
+    # 【网络优化】替换 Controller 主程序为阿里云镜像源，解决拉取超时
+    image:
+      registry: registry.aliyuncs.com
+      image: google_containers/nginx-ingress-controller
+    # 【网络优化】替换 Webhook 证书生成器为阿里云镜像源
+    admissionWebhooks:
+      patch:
+        image:
+          registry: registry.aliyuncs.com
+          image: google_containers/kube-webhook-certgen
 
 metallb:
   enabled: true  # 设为 true，Helm 会自动安装 MetalLB
+  # 【网络优化】MetalLB 官方使用 quay.io，国内极慢，在此替换为 DaoCloud 代理源
+  controller:
+    image:
+      registry: quay.m.daocloud.io
+  speaker:
+    image:
+      registry: quay.m.daocloud.io
