@@ -39,15 +39,25 @@
 - 在宝塔面板中开启 API 功能，并将 K8s 所在环境的公网出口 IP 加入白名单。
 - 准备好一个家庭宽带的 DDNS 域名（如 `home.i4t.com`）。
 
-### 2. 部署到 Kubernetes
-下载 `deploy.yaml` 并修改其中的环境变量（替换为你的宝塔 URL、API Key 及 DDNS 域名）：
+### 2. 部署到 Kubernetes (二选一)
 
+本项目支持 **Helm 一键部署 (推荐)** 和 **纯 YAML 部署** 两种方式：
+
+#### 方案 A：使用 Helm 部署 (🔥 推荐)
+Helm 方式支持全自动配置 RBAC 权限与资源管理。请进入仓库根目录，修改 `charts/kube-bt-sync/values.yaml` 中的对应变量，然后执行：
+```bash
+# 安装并创建 tools 命名空间
+helm install edge-gateway charts/kube-bt-sync -n tools --create-namespace
+```
+
+#### 方案 B：使用纯 YAML 部署
+如果您没有安装 Helm，可以直接下载并编辑 `deploy.yaml`，将其中的环境变量（宝塔 URL、API Key、DDNS 等）替换为您自己的真实信息，然后执行：
 ```bash
 kubectl apply -f deploy.yaml
 ```
 
 ### 3. 访问控制台
-部署成功后，通过任意 K8s 节点的 IP 和 `31080` 端口访问 Web 控制台：
+部署成功后，通过任意 K8s 节点的局域网 IP 和 `31080` 端口访问 Web 控制台：
 - **地址**: `http://<任意 Node IP>:31080`
 - **默认账号**: `admin`
 - **默认密码**: `i4t123456`
