@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,10 +30,25 @@ type DeleteRequest struct {
 	DeleteBaota bool   `json:"deleteBaota"`
 }
 
+// 🌟 企业级缓存锁定义：保护下游宝塔面板不被 F5 击穿
+var (
+	btSystemCache struct {
+		sync.RWMutex
+		status     string
+		msg        string
+		expireTime time.Time
+	}
+
+	btSitesCache struct {
+		sync.RWMutex
+		sslMap     map[string]bool
+		expireTime time.Time
+	}
+)
+
 func StartWebServer(k8sClient *kubernetes.Clientset, cfg Config) {
 	r := gin.Default()
 
-	// 🔒 安全拦截
 	authUser := os.Getenv("AUTH_USER")
 	authPass := os.Getenv("AUTH_PASSWORD")
 	if authUser != "" && authPass != "" {
@@ -96,6 +112,10 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 						"id":      fmt.Sprintf("%d", siteId),
 						"webname": req.Domain,
 					})
+					// 强制使站点缓存过期，以便下次立即拉取最新数据
+					btSitesCache.Lock()
+					btSitesCache.expireTime = time.Now()
+					btSitesCache.Unlock()
 				}
 			}
 		}
@@ -112,17 +132,35 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 }
 
 func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 1. 检查宝塔
-	baotaStatus := "error"
-	baotaMsg := "未知错误"
-	resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
-	if err != nil {
-		baotaMsg = "网络连通失败: " + err.Error()
-	} else if strings.Contains(resp, "API校验失败") || strings.Contains(resp, "IP不在白名单") {
-		baotaMsg = "API 密钥错误或未加入白名单"
-	} else {
-		baotaStatus = "success"
-		baotaMsg = "连接成功"
+	// 1. 检查宝塔 (加入 10 秒 TTL 缓存机制，防止 F5 狂刷压垮宝塔)
+	btSystemCache.RLock()
+	cachedStatus := btSystemCache.status
+	cachedMsg := btSystemCache.msg
+	isExpired := time.Now().After(btSystemCache.expireTime)
+	btSystemCache.RUnlock()
+
+	baotaStatus := cachedStatus
+	baotaMsg := cachedMsg
+
+	if isExpired {
+		resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
+		if err != nil {
+			baotaMsg = "网络连通失败: " + err.Error()
+			baotaStatus = "error"
+		} else if strings.Contains(resp, "API校验失败") || strings.Contains(resp, "IP不在白名单") {
+			baotaMsg = "API 密钥错误或未加入白名单"
+			baotaStatus = "error"
+		} else {
+			baotaStatus = "success"
+			baotaMsg = "连接成功"
+		}
+		
+		// 写入缓存，有效时间 10 秒
+		btSystemCache.Lock()
+		btSystemCache.status = baotaStatus
+		btSystemCache.msg = baotaMsg
+		btSystemCache.expireTime = time.Now().Add(10 * time.Second)
+		btSystemCache.Unlock()
 	}
 
 	// 2. 检查 K8s 状态
@@ -142,9 +180,9 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 		}
 	}
 
-	// 🌟 3. 获取真正的物理节点 LAN IP (局域网 Node IP)
+	// 3. 获取真正的物理节点 LAN IP
 	var nodeIP string
-	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{}) // 已修复：移除错误的 ""
+	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err == nil && len(nodes.Items) > 0 {
 		for _, addr := range nodes.Items[0].Status.Addresses {
 			if addr.Type == "InternalIP" {
@@ -198,20 +236,33 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 }
 
 func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	resp, _ := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
-	baotaSSL := make(map[string]bool)
-	var res map[string]interface{}
-	if json.Unmarshal([]byte(resp), &res) == nil {
-		if dataArr, ok := res["data"].([]interface{}); ok {
-			for _, item := range dataArr {
-				if site, ok := item.(map[string]interface{}); ok {
-					name, _ := site["name"].(string)
-					if sslVal, ok := site["ssl"].(float64); ok && sslVal > 0 {
-						baotaSSL[name] = true
+	// 宝塔 SSL 站点列表缓存 (10 秒 TTL)，防止路由表自动刷新打爆宝塔
+	btSitesCache.RLock()
+	baotaSSL := btSitesCache.sslMap
+	isExpired := time.Now().After(btSitesCache.expireTime)
+	btSitesCache.RUnlock()
+
+	if isExpired || baotaSSL == nil {
+		baotaSSL = make(map[string]bool)
+		resp, _ := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
+		var res map[string]interface{}
+		if json.Unmarshal([]byte(resp), &res) == nil {
+			if dataArr, ok := res["data"].([]interface{}); ok {
+				for _, item := range dataArr {
+					if site, ok := item.(map[string]interface{}); ok {
+						name, _ := site["name"].(string)
+						if sslVal, ok := site["ssl"].(float64); ok && sslVal > 0 {
+							baotaSSL[name] = true
+						}
 					}
 				}
 			}
 		}
+		
+		btSitesCache.Lock()
+		btSitesCache.sslMap = baotaSSL
+		btSitesCache.expireTime = time.Now().Add(10 * time.Second)
+		btSitesCache.Unlock()
 	}
 
 	ingresses, _ := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
@@ -300,6 +351,11 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 		c.JSON(500, gin.H{"error": "K8s 操作失败: " + err.Error()})
 		return
 	}
+
+	// 下发配置后，强制清空缓存，以便页面立刻拿到最新状态
+	btSitesCache.Lock()
+	btSitesCache.expireTime = time.Now()
+	btSitesCache.Unlock()
 
 	TriggerSync(k8sClient, cfg)
 	c.JSON(200, gin.H{"message": "配置下发成功！后台正实时同步..."})
