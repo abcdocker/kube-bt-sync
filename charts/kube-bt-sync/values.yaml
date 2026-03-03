@@ -1,7 +1,7 @@
 app:
   replicaCount: 1
   image:
-    repository: harbor.frps.cn/kube-bt-sync-main/v1.7
+    repository: harbor.frps.cn/kube-bt-sync-main/v1.8
     tag: latest
     pullPolicy: Always
 

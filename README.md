@@ -17,7 +17,7 @@
 - 🖱️ **可视化向导 + 极客模式**：支持全图形化点选下发 Ingress（智能联动获取 Namespace/Service/Port），也支持纯 YAML 高级下发。
 - 🔒 **一键 HTTPS 注入**：UI 面板提供拨动开关，下发时自动生成 K8s 标准 TLS 证书配置块。
 - 📡 **智能雷达探测**：自动识别 `MetalLB` 和 `Ingress-Nginx` 的部署状态（全面兼容 Deployment / DaemonSet 裸机模式）。
-- 🔄 **状态防闪烁轮询**：路由表状态自动后台静默刷新，状态变化实时感知。
+- 🔄 **状态防闪烁轮询**：路由表状态自动后台静默刷新，包含高并发防击穿内存 TTL 缓存。
 - 📖 **小白级路由指引**：自动抓取物理节点 (Node) 的真实局域网 IP，动态生成“路由器 NAT 映射作业表”。
 
 ---
@@ -61,6 +61,20 @@ kubectl apply -f deploy.yaml
 - **地址**: `http://<任意 Node IP>:31080`
 - **默认账号**: `admin`
 - **默认密码**: `i4t123456`
+
+---
+
+## 🎯 如何接管存量 Ingress
+
+如果您在部署 Kube-BT-Sync 之前，集群中已经存在跑着的业务 Ingress，**完全不需要删除重建！**
+
+Kube-BT-Sync 的核心逻辑是监听包含特定 `Annotations` (注解) 的 Ingress。您只需为现有的 Ingress 打上同步标签，工具就会瞬间接管它，并将其同步到公网宝塔面板上。
+
+执行以下命令即可一键接入（请替换为您自己的 `Ingress 名称` 和 `命名空间`）：
+```bash
+kubectl annotate ingress <你的存量Ingress名称> -n <命名空间> kube-bt-sync.io/baota-sync="true"
+```
+*(操作完成后，刷新您的 Web 控制台，该路由就会出现在“已同步的路由规则”列表中。)*
 
 ---
 

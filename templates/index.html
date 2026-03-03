@@ -19,8 +19,6 @@
         .component-detail { font-size: 0.85rem; color: #6c757d; margin-top: 4px; margin-left: 28px; }
         .nav-tabs .nav-link { color: #495057; font-weight: 500; }
         .nav-tabs .nav-link.active { color: #0d6efd; font-weight: bold; }
-        
-        /* HTTPS Switch 开关垂直居中微调 */
         .switch-wrapper { display: flex; align-items: center; height: 38px; margin-top: 28px; } 
     </style>
 </head>
@@ -146,7 +144,7 @@
                 </div>
 
                 <div class="tab-pane fade" id="yaml-mode" role="tabpanel">
-                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="10" style="font-family: monospace; font-size: 13px;">
+                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="11" style="font-family: monospace; font-size: 13px;">
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -155,6 +153,7 @@ metadata:
   annotations:
     kube-bt-sync.io/baota-sync: "true"
 spec:
+  ingressClassName: nginx
   rules:
   - host: demo.yourdomain.com
     http:
@@ -200,7 +199,7 @@ spec:
 <script>
     let globalExtPort = "38333"; 
     let allServices = []; 
-    let ruleRefreshInterval = null; // 自动刷新定时器
+    let ruleRefreshInterval = null; 
 
     async function refreshAll() {
         const btn = document.getElementById('refreshBtn');
@@ -315,7 +314,6 @@ spec:
         }
     }
 
-    // 🌟 核心升级：获取并渲染规则，使用字符串拼接方式防止 DOM 闪烁
     async function fetchRules() {
         try {
             const res = await fetch('/api/status');
@@ -330,7 +328,6 @@ spec:
             let newHtml = '';
             data.forEach(item => {
                 let statusColor = item.status.includes('已同步') ? 'text-success' : (item.status.includes('失败') ? 'text-danger' : 'text-warning');
-                // 动态添加小圈圈动画
                 let spinner = item.status.includes('同步中') ? '<i class="fas fa-spinner fa-spin me-1"></i>' : '';
                 
                 newHtml += `
@@ -348,15 +345,12 @@ spec:
                 `;
             });
             
-            // 一次性替换，防止屏幕闪动
             tbody.innerHTML = newHtml;
-            
         } catch (e) {
             console.error("后台刷新路由列表失败", e);
         }
     }
 
-    // 🌟 处理 GUI 表单下发 (包含 HTTPS 证书块逻辑)
     function applyGuiMode() {
         const ns = document.getElementById('gui-ns').value;
         const svc = document.getElementById('gui-svc').value;
@@ -369,9 +363,9 @@ spec:
             return;
         }
 
-        // 如果开启了 HTTPS，注入 tls 块
         const tlsBlock = enableHttps ? `\n  tls:\n  - hosts:\n    - ${domain}\n    secretName: ${svc}-tls` : '';
 
+        // 🌟 修复: 自动生成 ingressClassName: nginx
         const yamlContent = `apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -379,7 +373,8 @@ metadata:
   namespace: ${ns}
   annotations:
     kube-bt-sync.io/baota-sync: "true"
-spec:${tlsBlock}
+spec:
+  ingressClassName: nginx${tlsBlock}
   rules:
   - host: ${domain}
     http:
@@ -414,7 +409,7 @@ spec:${tlsBlock}
             const result = await res.json();
             if (res.ok) {
                 alert(result.message);
-                fetchRules(); // 下发后立即刷新一次列表
+                fetchRules(); 
             } else {
                 alert('下发失败: ' + result.error);
             }
@@ -439,7 +434,7 @@ spec:${tlsBlock}
             const result = await res.json();
             if (res.ok) {
                 alert(result.message);
-                fetchRules(); // 删除后立即刷新一次列表
+                fetchRules(); 
             } else {
                 alert('删除失败: ' + result.error);
             }
@@ -448,11 +443,8 @@ spec:${tlsBlock}
         }
     }
 
-    // 🌟 页面启动与后台轮询机制
     window.onload = () => {
-        refreshAll(); // 初始全量加载
-        
-        // 开启路由列表后台静默自动刷新 (每 3 秒刷新一次)
+        refreshAll(); 
         ruleRefreshInterval = setInterval(() => {
             fetchRules();
         }, 3000);
