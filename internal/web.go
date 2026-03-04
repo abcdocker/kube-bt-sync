@@ -52,20 +52,35 @@ func StartWebServer(k8sClient *kubernetes.Clientset, cfg Config) {
 		api.GET("/system/check", func(c *gin.Context) { handleSystemCheck(c, k8sClient, cfg) })
 		api.GET("/namespaces", func(c *gin.Context) { handleGetNamespaces(c, k8sClient) })
 		api.GET("/services", func(c *gin.Context) { handleGetServices(c, k8sClient) })
+		api.GET("/ingress/raw", func(c *gin.Context) { handleGetRawIngress(c, k8sClient) })
 	}
 
 	log.Println("kube-bt-sync Dashboard 已启动，监听 :8080")
 	r.Run(":8080")
 }
 
+func handleGetRawIngress(c *gin.Context, k8sClient *kubernetes.Clientset) {
+	ns := c.Query("ns")
+	name := c.Query("name")
+	ing, err := k8sClient.NetworkingV1().Ingresses(ns).Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }
+
+	ing.ManagedFields = nil
+	ing.Status = networkingv1.IngressStatus{}
+	ing.ResourceVersion = ""
+	ing.UID = ""
+	ing.CreationTimestamp = metav1.Time{}
+	ing.Generation = 0
+
+	yamlData, err := yaml.Marshal(ing)
+	if err != nil { c.JSON(500, gin.H{"error": "YAML 转换失败"}); return }
+	c.String(200, string(yamlData))
+}
+
 func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
 	var req DeleteRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "参数解析失败: " + err.Error()})
-		return
-	}
+	if err := c.ShouldBindJSON(&req); err != nil { c.JSON(400, gin.H{"error": "参数解析失败"}); return }
 
-	// 如果用户勾选了连带删除宝塔站点
 	if req.DeleteBaota {
 		resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "search": req.Domain})
 		if err == nil {
@@ -82,16 +97,11 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 	}
 
 	err := k8sClient.NetworkingV1().Ingresses(req.Namespace).Delete(context.TODO(), req.Name, metav1.DeleteOptions{})
-	if err != nil {
-		c.JSON(500, gin.H{"error": "删除 K8s Ingress 失败: " + err.Error()})
-		return
-	}
-
+	if err != nil { c.JSON(500, gin.H{"error": "删除 K8s Ingress 失败: " + err.Error()}); return }
 	c.JSON(200, gin.H{"message": "路由删除成功！"})
 }
 
 func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 系统大盘监控：每次打开页面时只测一次宝塔连通性
 	baotaStatus, baotaMsg := "success", "连接成功"
 	resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
 	if err != nil {
@@ -120,9 +130,16 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 		}
 	}
 
+	// 🌟 动态获取 HTTPS 端口，默认 443
+	httpsPort := os.Getenv("HTTPS_PORT")
+	if httpsPort == "" {
+		httpsPort = "443"
+	}
+
 	ddnsStatus, ddnsMsg := "error", "未配置 DDNS 域名或解析失败"
 	var resolvedIPs []string
 	cleanDDNS := strings.Split(strings.TrimPrefix(strings.TrimPrefix(cfg.DDNSHost, "http://"), "https://"), ":")[0]
+	port443Status := false 
 
 	if cleanDDNS != "" {
 		ips, err := net.LookupIP(cleanDDNS)
@@ -132,9 +149,16 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 				conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", cleanDDNS, cfg.DefaultPort), 2*time.Second)
 				if dialErr == nil {
 					conn.Close()
-					ddnsStatus, ddnsMsg = "success", fmt.Sprintf("穿透端口 (%s) TCP 通信正常", cfg.DefaultPort)
+					ddnsStatus, ddnsMsg = "success", fmt.Sprintf("主穿透端口 (%s) 正常", cfg.DefaultPort)
 				} else {
 					ddnsStatus, ddnsMsg = "warning", fmt.Sprintf("解析生效，但 TCP 端口 %s 不通", cfg.DefaultPort)
+				}
+				
+				// 🌟 使用动态获取的 HTTPS 端口进行探活
+				conn443, err443 := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", cleanDDNS, httpsPort), 2*time.Second)
+				if err443 == nil {
+					conn443.Close()
+					port443Status = true
 				}
 			}
 		}
@@ -143,12 +167,12 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 	c.JSON(200, gin.H{
 		"baota": gin.H{"status": baotaStatus, "msg": baotaMsg, "url": cfg.BaotaURL},
 		"k8s":   gin.H{"ingressInstalled": ingressInstalled, "metallbInstalled": metallbInstalled, "nodeIP": nodeIP},
-		"ddns":  gin.H{"status": ddnsStatus, "msg": ddnsMsg, "host": cfg.DDNSHost, "ips": resolvedIPs},
+		// 🌟 将 httpsPort 传递给前端
+		"ddns":  gin.H{"status": ddnsStatus, "msg": ddnsMsg, "host": cfg.DDNSHost, "ips": resolvedIPs, "port443": port443Status, "httpsPort": httpsPort},
 	})
 }
 
 func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 🌟 核心优化：不再去查宝塔 API，只查本地 K8s 集群，避免每3秒拉爆宝塔
 	ingresses, _ := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
 	var result []map[string]interface{}
 	for _, ing := range ingresses.Items {
@@ -161,10 +185,16 @@ func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 			scheme := "http"
 			if len(ing.Spec.TLS) > 0 { scheme = "https" }
 
+			modifiedAt := ing.CreationTimestamp.Format("2006-01-02 15:04:05")
+			if mod, ok := ing.Annotations["kube-bt-sync.io/last-modified"]; ok { modifiedAt = mod }
+
 			result = append(result, map[string]interface{}{
 				"namespace": ing.Namespace, "name": ing.Name, "domain": domain,
-				"scheme": scheme, "ddnsPort": port, "createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
-				"status": "🟢 已下发 (事件守护中)", // 状态改为静态显示
+				"scheme": scheme, "ddnsPort": port, 
+				"createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
+				"modifiedAt": modifiedAt,
+				"version": ing.ResourceVersion,
+				"status": "🟢 已下发 (事件守护中)",
 			})
 		}
 	}
@@ -199,6 +229,9 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 	if err := yaml.Unmarshal([]byte(req.YamlContent), &ingress); err != nil { c.JSON(400, gin.H{"error": "YAML 格式错误"}); return }
 	if ingress.Namespace == "" { ingress.Namespace = "default" }
 
+	if ingress.Annotations == nil { ingress.Annotations = make(map[string]string) }
+	ingress.Annotations["kube-bt-sync.io/last-modified"] = time.Now().Format("2006-01-02 15:04:05")
+
 	client := k8sClient.NetworkingV1().Ingresses(ingress.Namespace)
 	existing, err := client.Get(context.TODO(), ingress.Name, metav1.GetOptions{})
 
@@ -209,11 +242,6 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 		_, err = client.Create(context.TODO(), &ingress, metav1.CreateOptions{})
 	}
 
-	if err != nil {
-		c.JSON(500, gin.H{"error": "K8s 操作失败: " + err.Error()})
-		return
-	}
-
-	// 🌟 核心优化：下发完毕后不再主动调用 TriggerSync，而是交给 Watcher 事件去自动捕捉
-	c.JSON(200, gin.H{"message": "配置下发成功！事件监听器即将接管同步..."})
+	if err != nil { c.JSON(500, gin.H{"error": "K8s 操作失败: " + err.Error()}); return }
+	c.JSON(200, gin.H{"message": "配置下发/修改成功！事件监听器已接管同步..."})
 }

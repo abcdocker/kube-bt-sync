@@ -29,6 +29,8 @@ spec:
           value: {{ .Values.config.baotaApiKey | quote }}
         - name: DDNS_HOST
           value: {{ .Values.config.ddnsHost | quote }}
+        - name: HTTPS_PORT
+          value: {{ .Values.config.httpsPort | quote }}
         - name: DEFAULT_PORT
           value: {{ .Values.config.defaultPort | quote }}
         {{- if .Values.config.authUser }}

@@ -66,10 +66,13 @@
             <div class="card h-100">
                 <div class="card-header"><i class="fas fa-home text-success me-2"></i>家庭边缘节点 (DDNS)</div>
                 <div class="card-body">
-                    <h5 id="ddns-status" class="mb-3">⏳ 加载中...</h5>
-                    <p class="text-muted small mb-0">DDNS 域名: <span id="ddns-host" class="fw-bold text-dark">...</span></p>
-                    <p class="text-muted small">解析 IP: <span id="ddns-ips">...</span></p>
-                    <p class="text-muted small"><span id="ddns-msg">...</span></p>
+                    <h5 id="ddns-status" class="mb-2">⏳ 加载中...</h5>
+                    <p class="text-muted small mb-1">DDNS 域名: <span id="ddns-host" class="fw-bold text-dark">...</span></p>
+                    <p class="text-muted small mb-1">解析 IP: <span id="ddns-ips" class="fw-bold">...</span></p>
+                    <p class="text-muted small mb-1"><span id="ddns-msg">...</span></p>
+                    <p class="text-muted small mb-0 border-top pt-2 mt-2">
+                        <i class="fas fa-shield-alt text-success me-1"></i> HTTPS 探活: <span id="ddns-443-status">检查中...</span>
+                    </p>
                 </div>
             </div>
         </div>
@@ -79,14 +82,13 @@
         <div class="col-12">
             <div class="guide-box shadow-sm">
                 <div class="fw-bold text-primary mb-2"><i class="fas fa-route me-1"></i> 路由器端口转发 (NAT) 配置作业</div>
-                为了让宝塔云端的流量能精准打入您的家庭 K8s 集群，请在您的主路由器中添加以下端口映射规则：
+                为保障内外网流量精准穿透，请在您的主路由器中配置 <b>两组</b> 端口映射规则 (指向 K8s 物理节点 <span class="code-tag" id="guide-int-ip">获取中...</span>)：
                 <ul class="mt-2 mb-2" style="line-height: 1.8;">
-                    <li><b>外部端口 (外部访问)：</b> <span class="code-tag" id="guide-ext-port">获取中...</span> <span class="text-muted small">(对应宝塔云端反代目标端口)</span></li>
-                    <li><b>内部 IP (目标主机)：</b> 填写 <span class="code-tag" id="guide-int-ip">获取中...</span> <span class="text-muted small">(K8s 物理节点的局域网 IP)</span></li>
-                    <li><b>内部端口 (目标端口)：</b> <span class="code-tag" id="guide-int-port">80</span> <span class="text-muted small">(接收 HTTP 流量的标准端口)</span></li>
+                    <li><b>【规则 1 - 宝塔反代专用】</b> 外部端口: <span class="code-tag" id="guide-ext-port">获取中...</span> ➜ 内部端口: <span class="code-tag">80</span> <span class="text-muted small">(接收宝塔 HTTP 流量)</span></li>
+                    <li><b>【规则 2 - HTTPS 直连/证书】</b> 外部端口: <span class="code-tag" id="guide-ext-https-port">获取中...</span> ➜ 内部端口: <span class="code-tag">443</span> <span class="text-muted small">(标准 HTTPS 与直连通信必需)</span></li>
                 </ul>
                 <div class="small text-muted mt-2">
-                    <i class="fas fa-info-circle"></i> 流量链路：外网访客 ➜ 宝塔面板 ➜ <code>[DDNS域名]:[外部端口]</code> ➜ 家宽路由器转发 ➜ <code>[内部IP]:[内部端口]</code> ➜ K8s 业务 Pod
+                    <i class="fas fa-info-circle"></i> 提示：若您的宽带封锁了标准端口，您可以修改环境变量 <code>HTTPS_PORT</code> 来自定义外部 HTTPS 探测与展示端口。
                 </div>
             </div>
         </div>
@@ -97,10 +99,10 @@
         <div class="card-body">
             <ul class="nav nav-tabs mb-3" id="configTabs" role="tablist">
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="gui-tab" data-bs-toggle="tab" data-bs-target="#gui-mode" type="button" role="tab" aria-selected="true"><i class="fas fa-mouse-pointer me-1"></i> 可视化向导</button>
+                    <button class="nav-link active" id="gui-tab" data-bs-toggle="tab" data-bs-target="#gui-mode" type="button" role="tab"><i class="fas fa-mouse-pointer me-1"></i> 可视化向导</button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="yaml-tab" data-bs-toggle="tab" data-bs-target="#yaml-mode" type="button" role="tab" aria-selected="false"><i class="fas fa-code me-1"></i> YAML 极客模式</button>
+                    <button class="nav-link" id="yaml-tab" data-bs-toggle="tab" data-bs-target="#yaml-mode" type="button" role="tab"><i class="fas fa-code me-1"></i> YAML 极客模式</button>
                 </li>
             </ul>
 
@@ -132,7 +134,7 @@
                         <div class="col-md-2">
                             <div class="form-check form-switch switch-wrapper">
                                 <input class="form-check-input" type="checkbox" id="gui-https" checked style="cursor: pointer; transform: scale(1.2); margin-right: 10px;">
-                                <label class="form-check-label text-muted small fw-bold" for="gui-https" style="cursor: pointer;">开启 HTTPS</label>
+                                <label class="form-check-label text-muted small fw-bold" for="gui-https" style="cursor: pointer;">开启 HTTPS (SSL)</label>
                             </div>
                         </div>
                     </div>
@@ -144,7 +146,7 @@
                 </div>
 
                 <div class="tab-pane fade" id="yaml-mode" role="tabpanel">
-                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="12" style="font-family: monospace; font-size: 13px;">
+                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="14" style="font-family: monospace; font-size: 13px;">
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -166,9 +168,10 @@ spec:
             name: demo-service
             port:
               number: 80</textarea>
-                    <div class="mt-3 text-end">
+                    <div class="mt-3 d-flex justify-content-between">
+                        <span class="text-muted small mt-2"><i class="fas fa-info-circle"></i> 编辑保存后将自动覆盖集群原配置，并触发事件监听。</span>
                         <button class="btn btn-primary px-4" id="btn-yaml-submit" onclick="applyYamlMode()">
-                            <i class="fas fa-paper-plane me-1"></i> 下发到集群
+                            <i class="fas fa-paper-plane me-1"></i> 应用 / 覆盖集群配置
                         </button>
                     </div>
                 </div>
@@ -178,17 +181,18 @@ spec:
 
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="fas fa-list me-2"></i>已同步的路由规则 <span id="auto-refresh-indicator" class="text-muted small ms-2 fw-normal" style="display:none;"><i class="fas fa-spinner fa-spin"></i> 自动刷新中...</span></span>
+            <span><i class="fas fa-list me-2"></i>已同步的路由规则 </span>
         </div>
-        <div class="card-body p-0">
-            <table class="table table-hover mb-0">
+        <div class="card-body p-0" style="overflow-x: auto;">
+            <table class="table table-hover mb-0" style="white-space: nowrap;">
                 <thead class="table-light">
                     <tr>
-                        <th>命名空间</th><th>路由名称</th><th>访问域名</th><th>协议</th><th>映射端口</th><th>状态</th><th>操作</th>
+                        <th>命名空间</th><th>路由名称</th><th>访问域名</th><th>协议</th>
+                        <th>K8s 版本(RV)</th><th>创建时间</th><th>修改时间</th><th>状态</th><th class="text-end">操作</th>
                     </tr>
                 </thead>
                 <tbody id="rules-tbody">
-                    <tr><td colspan="7" class="text-center text-muted py-4">请点击刷新获取数据</td></tr>
+                    <tr><td colspan="9" class="text-center text-muted py-4">请点击刷新获取数据</td></tr>
                 </tbody>
             </table>
         </div>
@@ -200,7 +204,6 @@ spec:
 <script>
     let globalExtPort = "38333"; 
     let allServices = []; 
-    let ruleRefreshInterval = null; 
 
     async function refreshAll() {
         const btn = document.getElementById('refreshBtn');
@@ -209,15 +212,8 @@ spec:
         btn.disabled = true;
 
         try {
-            await Promise.all([
-                fetchSystemCheck(),
-                fetchNamespaces(),
-                fetchServices(),
-                fetchRules()
-            ]);
-        } catch (error) {
-            console.error("刷新失败", error);
-        } finally {
+            await Promise.all([ fetchSystemCheck(), fetchNamespaces(), fetchServices(), fetchRules() ]);
+        } catch (error) { console.error("刷新失败", error); } finally {
             icon.classList.remove('spin');
             btn.disabled = false;
         }
@@ -242,23 +238,34 @@ spec:
         } else {
             ddnsStatus.innerHTML = `<span class="badge bg-warning text-dark status-badge"><i class="fas fa-exclamation-triangle"></i> ${data.ddns.status === 'warning' ? '端口不通' : '解析异常'}</span>`;
         }
+        
+        // 🌟 重新绑定域名和 IP
         document.getElementById('ddns-host').innerText = data.ddns.host;
         document.getElementById('ddns-ips').innerText = data.ddns.ips ? data.ddns.ips.join(', ') : '无';
         document.getElementById('ddns-msg').innerText = data.ddns.msg;
+
+        const httpsPort = data.ddns.httpsPort || "443";
+        const p443 = document.getElementById('ddns-443-status');
+        if(data.ddns.port443) {
+            p443.innerHTML = `<span class="text-success fw-bold">已连通 (外网 ${httpsPort} 端口放行)</span>`;
+        } else {
+            p443.innerHTML = `<span class="text-danger">未连通 (外网 ${httpsPort} 端口未映射或被拦截)</span>`;
+        }
+
+        const extHttpsPortSpan = document.getElementById('guide-ext-https-port');
+        if(extHttpsPortSpan) extHttpsPortSpan.innerText = httpsPort;
 
         const portMatch = data.ddns.msg.match(/\((\d+)\)/);
         if (portMatch) globalExtPort = portMatch[1];
         document.getElementById('guide-ext-port').innerText = globalExtPort;
 
         document.getElementById('metallb-status').innerHTML = data.k8s.metallbInstalled 
-            ? '✅ MetalLB: <span class="text-success fw-bold">已安装</span>' 
-            : '❌ MetalLB: <span class="text-danger">未检测到</span>';
+            ? '✅ MetalLB: <span class="text-success fw-bold">已安装</span>' : '❌ MetalLB: <span class="text-danger">未检测到</span>';
         
         document.getElementById('ingress-status').innerHTML = data.k8s.ingressInstalled 
-            ? '✅ Ingress 控制器: <span class="text-success fw-bold">已安装</span>' 
-            : '❌ Ingress 控制器: <span class="text-danger">未检测到</span>';
+            ? '✅ Ingress 控制器: <span class="text-success fw-bold">已安装</span>' : '❌ Ingress 控制器: <span class="text-danger">未检测到</span>';
 
-        const realLanIP = data.k8s.nodeIP || "未获取到 Node IP (请检查RBAC权限)";
+        const realLanIP = data.k8s.nodeIP || "未获取到 Node IP";
         document.getElementById('guide-int-ip').innerText = realLanIP;
     }
 
@@ -276,13 +283,6 @@ spec:
     async function fetchServices() {
         const res = await fetch('/api/services');
         allServices = await res.json(); 
-        
-        const metallbSvc = allServices.find(s => s.name.includes('metallb-webhook'));
-        if (metallbSvc) document.getElementById('metallb-detail').innerText = `服务名: ${metallbSvc.name} | Cluster IP: ${metallbSvc.ip || 'N/A'}`;
-
-        const ingressSvc = allServices.find(s => s.name.includes('ingress-nginx-controller') && !s.name.includes('admission'));
-        if (ingressSvc) document.getElementById('ingress-detail').innerText = `服务名: ${ingressSvc.name} | Service IP: ${ingressSvc.ip || 'N/A'} | 监听端口: ${ingressSvc.ports.join(', ')}`;
-
         onNamespaceChange();
     }
 
@@ -290,12 +290,8 @@ spec:
         const currentNs = document.getElementById('gui-ns').value;
         const svcSelect = document.getElementById('gui-svc');
         svcSelect.innerHTML = '<option value="">请选择服务...</option>';
-        
         const filteredServices = allServices.filter(s => s.namespace === currentNs);
-        filteredServices.forEach(s => {
-            svcSelect.innerHTML += `<option value="${s.name}">${s.name}</option>`;
-        });
-        
+        filteredServices.forEach(s => { svcSelect.innerHTML += `<option value="${s.name}">${s.name}</option>`; });
         onServiceChange();
     }
 
@@ -304,12 +300,9 @@ spec:
         const currentSvc = document.getElementById('gui-svc').value;
         const portSelect = document.getElementById('gui-port');
         portSelect.innerHTML = '';
-        
         const targetService = allServices.find(s => s.namespace === currentNs && s.name === currentSvc);
         if (targetService && targetService.ports && targetService.ports.length > 0) {
-            targetService.ports.forEach(port => {
-                portSelect.innerHTML += `<option value="${port}">${port}</option>`;
-            });
+            targetService.ports.forEach(port => { portSelect.innerHTML += `<option value="${port}">${port}</option>`; });
         } else {
             portSelect.innerHTML = '<option value="">无可用端口</option>';
         }
@@ -320,36 +313,44 @@ spec:
             const res = await fetch('/api/status');
             const data = await res.json();
             const tbody = document.getElementById('rules-tbody');
-            
             if (!data || data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无同步规则</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">暂无同步规则</td></tr>';
                 return;
             }
-            
             let newHtml = '';
             data.forEach(item => {
-                let statusColor = item.status.includes('已同步') ? 'text-success' : (item.status.includes('失败') ? 'text-danger' : 'text-warning');
-                let spinner = item.status.includes('同步中') ? '<i class="fas fa-spinner fa-spin me-1"></i>' : '';
-                
+                let badge = item.scheme === 'https' ? 'bg-success' : 'bg-secondary';
                 newHtml += `
                     <tr>
                         <td>${item.namespace}</td>
                         <td class="fw-bold">${item.name}</td>
                         <td><a href="${item.scheme}://${item.domain}" target="_blank" class="text-decoration-none">${item.domain}</a></td>
-                        <td><span class="badge ${item.scheme === 'https' ? 'bg-success' : 'bg-secondary'}">${item.scheme.toUpperCase()}</span></td>
-                        <td><code>${item.ddnsPort}</code></td>
-                        <td class="fw-bold ${statusColor}">${spinner}${item.status}</td>
-                        <td>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteIngress('${item.namespace}', '${item.name}', '${item.domain}')">删除</button>
+                        <td><span class="badge ${badge}"><i class="fas fa-lock${item.scheme === 'https'?'':'-open'}"></i> ${item.scheme.toUpperCase()}</span></td>
+                        <td><code>v${item.version}</code></td>
+                        <td class="small text-muted">${item.createdAt}</td>
+                        <td class="small text-info">${item.modifiedAt}</td>
+                        <td class="fw-bold text-success">${item.status}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-primary me-1" onclick="editIngress('${item.namespace}', '${item.name}')"><i class="fas fa-edit"></i> 编辑</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteIngress('${item.namespace}', '${item.name}', '${item.domain}')"><i class="fas fa-trash"></i> 删除</button>
                         </td>
                     </tr>
                 `;
             });
-            
             tbody.innerHTML = newHtml;
-        } catch (e) {
-            console.error("后台刷新路由列表失败", e);
-        }
+        } catch (e) { console.error(e); }
+    }
+
+    async function editIngress(ns, name) {
+        try {
+            const res = await fetch(`/api/ingress/raw?ns=${ns}&name=${name}`);
+            if (!res.ok) { alert("获取详情失败"); return; }
+            const yamlText = await res.text();
+            document.getElementById('yamlInput').value = yamlText;
+            const yamlTab = new bootstrap.Tab(document.getElementById('yaml-tab'));
+            yamlTab.show();
+            document.getElementById('yamlInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (error) { alert('网络异常'); }
     }
 
     function applyGuiMode() {
@@ -359,14 +360,10 @@ spec:
         const domain = document.getElementById('gui-domain').value.trim();
         const enableHttps = document.getElementById('gui-https').checked;
 
-        if (!ns || !svc || !port || !domain) {
-            alert('⚠️ 请把命名空间、服务、端口和域名填写完整！');
-            return;
-        }
+        if (!ns || !svc || !port || !domain) { alert('⚠️ 请把命名空间、服务、端口和域名填写完整！'); return; }
 
         const tlsBlock = enableHttps ? `\n  tls:\n  - hosts:\n    - ${domain}\n    secretName: ${svc}-tls` : '';
 
-        // 🌟 核心修复：强制注入 ssl-redirect: "false" 和 ingressClassName
         const yamlContent = `apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -400,7 +397,7 @@ spec:
     async function sendYamlRequest(yamlContent, btnElement) {
         const originalText = btnElement.innerHTML;
         btnElement.disabled = true;
-        btnElement.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> 正在下发...';
+        btnElement.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> 处理中...';
 
         try {
             const res = await fetch('/api/ingress/yaml', {
@@ -409,15 +406,8 @@ spec:
                 body: JSON.stringify({yamlContent})
             });
             const result = await res.json();
-            if (res.ok) {
-                alert(result.message);
-                fetchRules(); 
-            } else {
-                alert('下发失败: ' + result.error);
-            }
-        } catch (e) {
-            alert('网络请求异常');
-        } finally {
+            if (res.ok) { alert(result.message); fetchRules(); } else { alert('操作失败: ' + result.error); }
+        } catch (e) { alert('网络请求异常'); } finally {
             btnElement.disabled = false;
             btnElement.innerHTML = originalText;
         }
@@ -434,23 +424,11 @@ spec:
                 body: JSON.stringify({namespace: ns, name: name, domain: domain, deleteBaota: delBaota})
             });
             const result = await res.json();
-            if (res.ok) {
-                alert(result.message);
-                fetchRules(); 
-            } else {
-                alert('删除失败: ' + result.error);
-            }
-        } catch (e) {
-            alert('网络请求异常');
-        }
+            if (res.ok) { alert(result.message); fetchRules(); } else { alert('删除失败: ' + result.error); }
+        } catch (e) { alert('网络请求异常'); }
     }
 
-    window.onload = () => {
-        refreshAll(); 
-        ruleRefreshInterval = setInterval(() => {
-            fetchRules();
-        }, 3000);
-    };
+    window.onload = () => { refreshAll(); };
 </script>
 </body>
 </html>

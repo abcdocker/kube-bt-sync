@@ -53,7 +53,7 @@ spec:
       serviceAccountName: kube-bt-sync-sa
       containers:
       - name: sync-server
-        image: harbor.frps.cn/kube-bt-sync-main/v1.10
+        image: harbor.frps.cn/kube-bt-sync-main/v1.13
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -70,6 +70,8 @@ spec:
           value: "home.i4t.com"
         - name: DEFAULT_PORT
           value: "38333"
+        - name: HTTPS_PORT
+          value: "38443"
 ---
 apiVersion: v1
 kind: Service

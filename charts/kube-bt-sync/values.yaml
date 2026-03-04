@@ -1,7 +1,7 @@
 app:
   replicaCount: 1
   image:
-    repository: harbor.frps.cn/kube-bt-sync-main/v1.10
+    repository: harbor.frps.cn/kube-bt-sync-main/v1.13
     tag: latest
     pullPolicy: Always
 
@@ -19,6 +19,7 @@ config:
   # 家庭宽带 DDNS 配置
   ddnsHost: "home.i4t.com"
   defaultPort: "38333"
+  httpsPort: "38443"
 
 # ==========================================
 # 📦 底层依赖开关 (一键安装前置组件)

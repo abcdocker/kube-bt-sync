@@ -10,15 +10,17 @@
 
 ---
 
-## ✨ 核心特性
+## ✨ 核心特性升级
 
 - 🕸️ **云边协同组网**：公网宝塔面板处理 HTTPS 与 WAF 防护，后端流量精准穿透至家庭 K8s 节点。
-- 🖥️ **高颜值 Web 控制台**：提供三足鼎立的大盘监控（宝塔状态、K8s 设施、DDNS 状态）。
-- 🖱️ **可视化向导 + 极客模式**：支持全图形化点选下发 Ingress（智能联动获取 Namespace/Service/Port），也支持纯 YAML 高级下发。
-- 🔒 **一键 HTTPS 注入**：UI 面板提供拨动开关，下发时自动生成 K8s 标准 TLS 证书配置块。
-- 📡 **智能雷达探测**：自动识别 `MetalLB` 和 `Ingress-Nginx` 的部署状态（全面兼容 Deployment / DaemonSet 裸机模式）。
-- 🔄 **状态防闪烁轮询**：路由表状态自动后台静默刷新，包含高并发防击穿内存 TTL 缓存。
-- 📖 **小白级路由指引**：自动抓取物理节点 (Node) 的真实局域网 IP，动态生成“路由器 NAT 映射作业表”。
+- 🖥️ **高颜值 Web 控制台**：提供大盘监控，**前端原生支持自定义 HTTPS 端口全链路探活探测**。
+- 🖱️ **配置可视化与在线编辑**：
+  - **可视化向导**：智能联动获取 Namespace/Service/Port。
+  - **在线编辑与查看**：一键提取存量 Ingress 纯净 YAML，支持页面直接修改覆盖。
+  - **版本审计**：追踪路由 K8s ResourceVersion 变更记录，精确显示创建时间和修改时间。
+- 🔒 **一键原生 SSL/HTTPS 支持**：申请 Ingress 界面提供 SSL 开启开关，自动注入标准 TLS 证书块，无缝对接 Let's Encrypt。
+- 📡 **智能雷达探测**：自动识别 `MetalLB` 和 `Ingress-Nginx` 的部署状态（兼容 DaemonSet 裸机模式）。
+- 🔄 **事件驱动极速同步**：废弃高频轮询，全面拥抱 K8s Native Watcher (事件驱动)，精准捕捉配置变动，宝塔 API 零压迫。
 
 ---
 
@@ -27,7 +29,7 @@
 外网用户访问您的业务域名时，流量流经如下路径：
 1. **外网访客** ➜ 访问公网域名 `https://app.i4t.com`
 2. **云端宝塔面板** ➜ 接收请求，通过反向代理将流量打向您家庭宽带的 DDNS 地址和高端口 (例: `home.i4t.com:38333`)
-3. **家庭主路由器 (NAT)** ➜ 接收到 `38333` 端口流量，转发至 K8s 物理节点的 `80/443` 端口
+3. **家庭主路由器 (NAT)** ➜ 接收到流量，转发至 K8s 物理节点的 `80/443` 端口
 4. **K8s Ingress 控制器** ➜ Nginx 接收流量，根据 Ingress 规则路由给具体的业务 Pod
 
 ---
@@ -44,70 +46,30 @@
 本项目支持 **Helm 一键部署 (推荐)** 和 **纯 YAML 部署** 两种方式：
 
 #### 方案 A：使用 Helm 部署 (🔥 推荐)
-Helm 方式支持全自动配置 RBAC 权限与资源管理。请进入仓库根目录，修改 `charts/kube-bt-sync/values.yaml` 中的对应变量，然后执行：
+请进入仓库根目录，修改 `charts/kube-bt-sync/values.yaml` 中的对应变量，然后执行：
 ```bash
-# 安装并创建 tools 命名空间
 helm install edge-gateway charts/kube-bt-sync -n tools --create-namespace
 ```
 
 #### 方案 B：使用纯 YAML 部署
-如果您没有安装 Helm，可以直接下载并编辑 `deploy.yaml`，将其中的环境变量（宝塔 URL、API Key、DDNS 等）替换为您自己的真实信息，然后执行：
+直接下载并编辑 `deploy.yaml`，将其中的环境变量替换为您自己的真实信息，然后执行：
 ```bash
 kubectl apply -f deploy.yaml
 ```
 
 ### 3. 访问控制台
-部署成功后，通过任意 K8s 节点的局域网 IP 和 `31080` 端口访问 Web 控制台：
-- **地址**: `http://<任意 Node IP>:31080`
-- **默认账号**: `admin`
-- **默认密码**: `i4t123456`
+部署成功后，通过任意 K8s 节点的局域网 IP 和 `31080` 端口访问 Web 控制台。
 
 ---
 
-## 🎯 如何接管存量 Ingress
+## 🎯 如何接管与编辑存量 Ingress
 
 如果您在部署 Kube-BT-Sync 之前，集群中已经存在跑着的业务 Ingress，**完全不需要删除重建！**
-
-您只需为现有的 Ingress 打上同步标签，工具就会瞬间接管它，并将其同步到公网宝塔面板上：
+只需执行以下命令，工具就会瞬间接管并在 UI 面板中展现其创建与修改记录：
 ```bash
 kubectl annotate ingress <你的存量Ingress名称> -n <命名空间> kube-bt-sync.io/baota-sync="true"
 ```
-
----
-
-## ⚠️ 常见问题避坑指南 (FAQ)
-
-### Q1: 页面访问报 `ERR_TOO_MANY_REDIRECTS` (308 重定向死循环)？
-这是“云边协同架构”中最容易踩的坑。当外网宝塔 Nginx 卸载了 HTTPS 证书，用纯 HTTP 将请求转发给家庭内网的 K8s Ingress 时，由于内网 Ingress 也配置了 TLS，K8s 会默认将 HTTP 请求强制重定向回 HTTPS，导致死循环。
-
-**解决方案：**
-Kube-BT-Sync 控制台生成的 Ingress 已默认添加防重定向注解。对于手工编写的 Ingress，请务必加上：
-```yaml
-annotations:
-  nginx.ingress.kubernetes.io/ssl-redirect: "false"
-```
-
-### Q2: WebSocket 服务 (如终端、实时日志) 无法连接？
-宝塔面板默认的反向代理配置可能在转发链路中丢失 `Upgrade` 头或错误处理 `Connection` 变量，导致 WebSocket 降级失败。
-
-**标准外部 Nginx 配置文件参考（针对反代节点）：**
-```nginx
-location ^~ / {
-    proxy_pass http://<您的DDNS域名>:<映射端口>;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header REMOTE-HOST $remote_addr;
-    
-    # 关键：欺骗内部 K8s，告知已在外部承载 HTTPS
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # 关键：硬编码维持 WebSocket 长连接
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
+接入后，您可以直接在 Web 页面点击 **“📝 编辑”**，即可进入 YAML 极客模式安全地修改并覆盖它。
 
 ---
 
@@ -115,12 +77,40 @@ location ^~ / {
 
 | 变量名 | 必填 | 说明 | 示例值 |
 | :--- | :---: | :--- | :--- |
-| `AUTH_USER` | 是 | Web 控制台的 Basic Auth 登录账号 | `admin` |
-| `AUTH_PASSWORD` | 是 | Web 控制台的登录密码 | `i4t123456` |
-| `BAOTA_URL` | 是 | 宝塔面板 API 接口地址 (带协议和端口) | `http://110.x.x.x:8888` |
-| `BAOTA_API_KEY` | 是 | 宝塔面板生成的 API 密钥 | `faEZ9s7Z5J6cIFv...` |
+| `AUTH_USER` | 是 | Web 控制台登录账号 | `admin` |
+| `AUTH_PASSWORD` | 是 | Web 控制台登录密码 | `i4t123456` |
+| `BAOTA_URL` | 是 | 宝塔面板 API 接口地址 | `http://110.x.x.x:8888` |
+| `BAOTA_API_KEY` | 是 | 宝塔面板 API 密钥 | `faEZ...` |
 | `DDNS_HOST` | 是 | 家庭宽带绑定的动态域名 | `home.i4t.com` |
-| `DEFAULT_PORT`| 是 | 映射到宝塔的反代默认接收端口 | `38333` |
+| `DEFAULT_PORT`| 是 | 宝塔反代接收默认端口 | `38333` |
+| `HTTPS_PORT`| 否 | **(新增)** 自定义外网直连 HTTPS 端口，默认 443 | `44333` |
+
+---
+
+## 🛠️ 路由器 NAT 映射配置 (极度重要)
+
+为保障内外网流量精准穿透以及 HTTPS 证书验证，请在您的主路由器中配置 **两组** 端口映射规则 (指向 K8s 物理节点)：
+
+* **【规则 1 - 宝塔反代专用】**
+  * 外部端口：`38333` (对应 `DEFAULT_PORT`) ➜ 内部端口：`80` 
+* **【规则 2 - HTTPS 证书签发/直连】**
+  * 外部端口：`443` (对应 `HTTPS_PORT` 变量) ➜ 内部端口：`443` (标准 HTTPS 流量与内部组件 ACME 验证必需)
+
+> 💡 **提示**: 登录 Kube-BT-Sync 控制台，首页的“家庭边缘节点”模块会自动探测您的 HTTPS 端口连通状态。
+
+---
+
+## ⚠️ 常见问题避坑指南 (FAQ)
+
+### Q1: 页面访问报 `ERR_TOO_MANY_REDIRECTS` (308 重定向死循环)？
+当外网宝塔 Nginx 卸载了 HTTPS 证书，用纯 HTTP 将请求转发给家庭内网的 K8s Ingress 时，由于内网 Ingress 也配置了 TLS，K8s 会默认将 HTTP 请求强制重定向回 HTTPS，导致死循环。
+
+**解决方案：**
+Kube-BT-Sync 控制台生成的 Ingress 已默认添加防重定向注解。对于手工编写的 Ingress，请务必加上：
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/ssl-redirect: "false"
+```
 
 ---
 
