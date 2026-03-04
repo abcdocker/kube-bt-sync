@@ -144,7 +144,7 @@
                 </div>
 
                 <div class="tab-pane fade" id="yaml-mode" role="tabpanel">
-                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="11" style="font-family: monospace; font-size: 13px;">
+                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="12" style="font-family: monospace; font-size: 13px;">
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -152,6 +152,7 @@ metadata:
   namespace: default
   annotations:
     kube-bt-sync.io/baota-sync: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx
   rules:
@@ -365,7 +366,7 @@ spec:
 
         const tlsBlock = enableHttps ? `\n  tls:\n  - hosts:\n    - ${domain}\n    secretName: ${svc}-tls` : '';
 
-        // 🌟 修复: 自动生成 ingressClassName: nginx
+        // 🌟 核心修复：强制注入 ssl-redirect: "false" 和 ingressClassName
         const yamlContent = `apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -373,6 +374,7 @@ metadata:
   namespace: ${ns}
   annotations:
     kube-bt-sync.io/baota-sync: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx${tlsBlock}
   rules:

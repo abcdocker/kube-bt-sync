@@ -68,19 +68,50 @@ kubectl apply -f deploy.yaml
 
 如果您在部署 Kube-BT-Sync 之前，集群中已经存在跑着的业务 Ingress，**完全不需要删除重建！**
 
-Kube-BT-Sync 的核心逻辑是监听包含特定 `Annotations` (注解) 的 Ingress。您只需为现有的 Ingress 打上同步标签，工具就会瞬间接管它，并将其同步到公网宝塔面板上。
-
-执行以下命令即可一键接入（请替换为您自己的 `Ingress 名称` 和 `命名空间`）：
+您只需为现有的 Ingress 打上同步标签，工具就会瞬间接管它，并将其同步到公网宝塔面板上：
 ```bash
 kubectl annotate ingress <你的存量Ingress名称> -n <命名空间> kube-bt-sync.io/baota-sync="true"
 ```
-*(操作完成后，刷新您的 Web 控制台，该路由就会出现在“已同步的路由规则”列表中。)*
+
+---
+
+## ⚠️ 常见问题避坑指南 (FAQ)
+
+### Q1: 页面访问报 `ERR_TOO_MANY_REDIRECTS` (308 重定向死循环)？
+这是“云边协同架构”中最容易踩的坑。当外网宝塔 Nginx 卸载了 HTTPS 证书，用纯 HTTP 将请求转发给家庭内网的 K8s Ingress 时，由于内网 Ingress 也配置了 TLS，K8s 会默认将 HTTP 请求强制重定向回 HTTPS，导致死循环。
+
+**解决方案：**
+Kube-BT-Sync 控制台生成的 Ingress 已默认添加防重定向注解。对于手工编写的 Ingress，请务必加上：
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/ssl-redirect: "false"
+```
+
+### Q2: WebSocket 服务 (如终端、实时日志) 无法连接？
+宝塔面板默认的反向代理配置可能在转发链路中丢失 `Upgrade` 头或错误处理 `Connection` 变量，导致 WebSocket 降级失败。
+
+**标准外部 Nginx 配置文件参考（针对反代节点）：**
+```nginx
+location ^~ / {
+    proxy_pass http://<您的DDNS域名>:<映射端口>;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header REMOTE-HOST $remote_addr;
+    
+    # 关键：欺骗内部 K8s，告知已在外部承载 HTTPS
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # 关键：硬编码维持 WebSocket 长连接
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
 
 ---
 
 ## ⚙️ 环境变量配置说明
-
-在 Deployment 中，支持以下环境变量配置：
 
 | 变量名 | 必填 | 说明 | 示例值 |
 | :--- | :---: | :--- | :--- |
@@ -90,19 +121,6 @@ kubectl annotate ingress <你的存量Ingress名称> -n <命名空间> kube-bt-s
 | `BAOTA_API_KEY` | 是 | 宝塔面板生成的 API 密钥 | `faEZ9s7Z5J6cIFv...` |
 | `DDNS_HOST` | 是 | 家庭宽带绑定的动态域名 | `home.i4t.com` |
 | `DEFAULT_PORT`| 是 | 映射到宝塔的反代默认接收端口 | `38333` |
-
----
-
-## 🛠️ 路由器 NAT 映射配置 (必做)
-
-为了让流量闭环，您必须在家庭主路由器（或光猫）的“端口映射/虚拟服务器”中添加如下规则：
-
-* **外部端口**：`38333` (需与环境变量 `DEFAULT_PORT` 保持一致)
-* **内部 IP 地址**：填写您的 K8s Ingress 所在节点的局域网 IP (系统控制台页面会自动探测并显示此 IP)。
-* **内部端口**：`80` (或 443，取决于您的 Ingress 配置方式)
-* **协议类型**：`TCP`
-
-> 💡 **提示**: 登录 Kube-BT-Sync 的 Web 页面，首页会为您动态生成准确的路由器配置指南，直接“抄作业”即可！
 
 ---
 
