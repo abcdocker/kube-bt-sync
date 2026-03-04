@@ -12,6 +12,8 @@ func main() {
 	log.Println(">>> 连接 K8s 集群...")
 	k8sClient := internal.InitK8sClient()
 
-	go internal.StartSyncer(k8sClient, cfg)
+	// 🌟 核心升级：废弃定时轮询，启动纯事件驱动的 K8s Watcher 雷达
+	go internal.StartIngressWatcher(k8sClient, cfg)
+	
 	internal.StartWebServer(k8sClient, cfg)
 }

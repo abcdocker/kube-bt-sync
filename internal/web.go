@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,34 +29,14 @@ type DeleteRequest struct {
 	DeleteBaota bool   `json:"deleteBaota"`
 }
 
-// 🌟 企业级缓存锁定义：保护下游宝塔面板不被 F5 击穿
-var (
-	btSystemCache struct {
-		sync.RWMutex
-		status     string
-		msg        string
-		expireTime time.Time
-	}
-
-	btSitesCache struct {
-		sync.RWMutex
-		sslMap     map[string]bool
-		expireTime time.Time
-	}
-)
-
 func StartWebServer(k8sClient *kubernetes.Clientset, cfg Config) {
 	r := gin.Default()
 
 	authUser := os.Getenv("AUTH_USER")
 	authPass := os.Getenv("AUTH_PASSWORD")
 	if authUser != "" && authPass != "" {
-		r.Use(gin.BasicAuth(gin.Accounts{
-			authUser: authPass,
-		}))
-		log.Printf("🔒 已开启 Web 控制台安全认证 (用户: %s)", authUser)
-	} else {
-		log.Println("⚠️ 警告：未配置 AUTH_USER 和 AUTH_PASSWORD，控制台处于裸奔状态！")
+		r.Use(gin.BasicAuth(gin.Accounts{authUser: authPass}))
+		log.Printf("🔒 Web 控制台已开启安全认证")
 	}
 
 	r.Delims("[[", "]]")
@@ -86,36 +65,17 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 		return
 	}
 
+	// 如果用户勾选了连带删除宝塔站点
 	if req.DeleteBaota {
-		resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{
-			"table":  "sites",
-			"search": req.Domain,
-		})
-		
+		resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "search": req.Domain})
 		if err == nil {
-			var siteData struct {
-				Data []struct {
-					Id   int    `json:"id"`
-					Name string `json:"name"`
-				} `json:"data"`
-			}
+			var siteData struct { Data []struct { Id int `json:"id"`; Name string `json:"name"` } `json:"data"` }
 			if json.Unmarshal([]byte(resp), &siteData) == nil {
-				siteId := -1
 				for _, site := range siteData.Data {
 					if site.Name == req.Domain {
-						siteId = site.Id
+						CallBaotaAPI(cfg, "/site?action=DeleteSite", map[string]string{"id": fmt.Sprintf("%d", site.Id), "webname": req.Domain})
 						break
 					}
-				}
-				if siteId != -1 {
-					CallBaotaAPI(cfg, "/site?action=DeleteSite", map[string]string{
-						"id":      fmt.Sprintf("%d", siteId),
-						"webname": req.Domain,
-					})
-					// 强制使站点缓存过期，以便下次立即拉取最新数据
-					btSitesCache.Lock()
-					btSitesCache.expireTime = time.Now()
-					btSitesCache.Unlock()
 				}
 			}
 		}
@@ -127,102 +87,54 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 		return
 	}
 
-	TriggerSync(k8sClient, cfg)
 	c.JSON(200, gin.H{"message": "路由删除成功！"})
 }
 
 func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 1. 检查宝塔 (加入 10 秒 TTL 缓存机制，防止 F5 狂刷压垮宝塔)
-	btSystemCache.RLock()
-	cachedStatus := btSystemCache.status
-	cachedMsg := btSystemCache.msg
-	isExpired := time.Now().After(btSystemCache.expireTime)
-	btSystemCache.RUnlock()
-
-	baotaStatus := cachedStatus
-	baotaMsg := cachedMsg
-
-	if isExpired {
-		resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
-		if err != nil {
-			baotaMsg = "网络连通失败: " + err.Error()
-			baotaStatus = "error"
-		} else if strings.Contains(resp, "API校验失败") || strings.Contains(resp, "IP不在白名单") {
-			baotaMsg = "API 密钥错误或未加入白名单"
-			baotaStatus = "error"
-		} else {
-			baotaStatus = "success"
-			baotaMsg = "连接成功"
-		}
-		
-		// 写入缓存，有效时间 10 秒
-		btSystemCache.Lock()
-		btSystemCache.status = baotaStatus
-		btSystemCache.msg = baotaMsg
-		btSystemCache.expireTime = time.Now().Add(10 * time.Second)
-		btSystemCache.Unlock()
+	// 系统大盘监控：每次打开页面时只测一次宝塔连通性
+	baotaStatus, baotaMsg := "success", "连接成功"
+	resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
+	if err != nil {
+		baotaMsg, baotaStatus = "网络连通失败: "+err.Error(), "error"
+	} else if strings.Contains(resp, "API校验失败") || strings.Contains(resp, "IP不在白名单") {
+		baotaMsg, baotaStatus = "API 密钥错误或未加入白名单", "error"
 	}
 
-	// 2. 检查 K8s 状态
 	ingressInstalled, metallbInstalled := false, false
-	deployments, err := k8sClient.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
-	if err == nil {
-		for _, deploy := range deployments.Items {
-			if strings.Contains(deploy.Name, "ingress-nginx") { ingressInstalled = true }
-			if strings.Contains(deploy.Name, "metallb") { metallbInstalled = true }
-		}
+	deployments, _ := k8sClient.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
+	for _, deploy := range deployments.Items {
+		if strings.Contains(deploy.Name, "ingress-nginx") { ingressInstalled = true }
+		if strings.Contains(deploy.Name, "metallb") { metallbInstalled = true }
 	}
-	daemonsets, err := k8sClient.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
-	if err == nil {
-		for _, ds := range daemonsets.Items {
-			if strings.Contains(ds.Name, "ingress-nginx") { ingressInstalled = true }
-			if strings.Contains(ds.Name, "metallb") { metallbInstalled = true }
-		}
+	daemonsets, _ := k8sClient.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
+	for _, ds := range daemonsets.Items {
+		if strings.Contains(ds.Name, "ingress-nginx") { ingressInstalled = true }
+		if strings.Contains(ds.Name, "metallb") { metallbInstalled = true }
 	}
 
-	// 3. 获取真正的物理节点 LAN IP
 	var nodeIP string
 	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err == nil && len(nodes.Items) > 0 {
 		for _, addr := range nodes.Items[0].Status.Addresses {
-			if addr.Type == "InternalIP" {
-				nodeIP = addr.Address
-				break 
-			}
+			if addr.Type == "InternalIP" { nodeIP = addr.Address; break }
 		}
 	}
 
-	// 4. DDNS 探测
-	ddnsStatus := "error"
-	ddnsMsg := "未配置 DDNS 域名或解析失败"
+	ddnsStatus, ddnsMsg := "error", "未配置 DDNS 域名或解析失败"
 	var resolvedIPs []string
-
-	cleanDDNS := strings.TrimPrefix(cfg.DDNSHost, "http://")
-	cleanDDNS = strings.TrimPrefix(cleanDDNS, "https://")
-	cleanDDNS = strings.Split(cleanDDNS, ":")[0]
+	cleanDDNS := strings.Split(strings.TrimPrefix(strings.TrimPrefix(cfg.DDNSHost, "http://"), "https://"), ":")[0]
 
 	if cleanDDNS != "" {
 		ips, err := net.LookupIP(cleanDDNS)
-		if err != nil {
-			ddnsMsg = "DNS 解析失败: " + err.Error()
-		} else {
-			for _, ip := range ips {
-				if ipv4 := ip.To4(); ipv4 != nil {
-					resolvedIPs = append(resolvedIPs, ipv4.String())
-				}
-			}
-			if len(resolvedIPs) == 0 {
-				ddnsMsg = "未解析到 IPv4 地址"
-			} else {
-				hostPort := fmt.Sprintf("%s:%s", cleanDDNS, cfg.DefaultPort)
-				conn, dialErr := net.DialTimeout("tcp", hostPort, 2*time.Second)
+		if err == nil {
+			for _, ip := range ips { if ipv4 := ip.To4(); ipv4 != nil { resolvedIPs = append(resolvedIPs, ipv4.String()) } }
+			if len(resolvedIPs) > 0 {
+				conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", cleanDDNS, cfg.DefaultPort), 2*time.Second)
 				if dialErr == nil {
 					conn.Close()
-					ddnsStatus = "success"
-					ddnsMsg = fmt.Sprintf("穿透端口 (%s) TCP 通信正常", cfg.DefaultPort)
+					ddnsStatus, ddnsMsg = "success", fmt.Sprintf("穿透端口 (%s) TCP 通信正常", cfg.DefaultPort)
 				} else {
-					ddnsStatus = "warning"
-					ddnsMsg = fmt.Sprintf("解析生效，但 TCP 端口 %s 不通(请检查映射)", cfg.DefaultPort)
+					ddnsStatus, ddnsMsg = "warning", fmt.Sprintf("解析生效，但 TCP 端口 %s 不通", cfg.DefaultPort)
 				}
 			}
 		}
@@ -236,35 +148,7 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 }
 
 func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	// 宝塔 SSL 站点列表缓存 (10 秒 TTL)，防止路由表自动刷新打爆宝塔
-	btSitesCache.RLock()
-	baotaSSL := btSitesCache.sslMap
-	isExpired := time.Now().After(btSitesCache.expireTime)
-	btSitesCache.RUnlock()
-
-	if isExpired || baotaSSL == nil {
-		baotaSSL = make(map[string]bool)
-		resp, _ := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "limit": "1000"})
-		var res map[string]interface{}
-		if json.Unmarshal([]byte(resp), &res) == nil {
-			if dataArr, ok := res["data"].([]interface{}); ok {
-				for _, item := range dataArr {
-					if site, ok := item.(map[string]interface{}); ok {
-						name, _ := site["name"].(string)
-						if sslVal, ok := site["ssl"].(float64); ok && sslVal > 0 {
-							baotaSSL[name] = true
-						}
-					}
-				}
-			}
-		}
-		
-		btSitesCache.Lock()
-		btSitesCache.sslMap = baotaSSL
-		btSitesCache.expireTime = time.Now().Add(10 * time.Second)
-		btSitesCache.Unlock()
-	}
-
+	// 🌟 核心优化：不再去查宝塔 API，只查本地 K8s 集群，避免每3秒拉爆宝塔
 	ingresses, _ := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
 	var result []map[string]interface{}
 	for _, ing := range ingresses.Items {
@@ -274,21 +158,13 @@ func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 			domain := "N/A"
 			if len(ing.Spec.Rules) > 0 { domain = ing.Spec.Rules[0].Host }
 
-			targetURL := fmt.Sprintf("http://%s:%s", cfg.DDNSHost, port)
-			syncStatus := GetSyncStatus(domain, targetURL)
-
 			scheme := "http"
-			if len(ing.Spec.TLS) > 0 {
-				scheme = "https"
-				if !baotaSSL[domain] && strings.Contains(syncStatus, "已同步") {
-					syncStatus += " (⚠️ 宝塔未配置证书)"
-				}
-			}
+			if len(ing.Spec.TLS) > 0 { scheme = "https" }
 
 			result = append(result, map[string]interface{}{
 				"namespace": ing.Namespace, "name": ing.Name, "domain": domain,
 				"scheme": scheme, "ddnsPort": port, "createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
-				"status": syncStatus,
+				"status": "🟢 已下发 (事件守护中)", // 状态改为静态显示
 			})
 		}
 	}
@@ -307,36 +183,22 @@ func handleGetServices(c *gin.Context, k8sClient *kubernetes.Clientset) {
 	var result []map[string]interface{}
 	for _, svc := range services.Items {
 		var ports []int32
-		for _, p := range svc.Spec.Ports {
-			ports = append(ports, p.Port)
-		}
-		
+		for _, p := range svc.Spec.Ports { ports = append(ports, p.Port) }
 		ip := svc.Spec.ClusterIP
-		if len(svc.Status.LoadBalancer.Ingress) > 0 {
-			ip = svc.Status.LoadBalancer.Ingress[0].IP
-		}
-
-		result = append(result, map[string]interface{}{
-			"name": svc.Name, "namespace": svc.Namespace, "ports": ports, "ip": ip,
-		})
+		if len(svc.Status.LoadBalancer.Ingress) > 0 { ip = svc.Status.LoadBalancer.Ingress[0].IP }
+		result = append(result, map[string]interface{}{"name": svc.Name, "namespace": svc.Namespace, "ports": ports, "ip": ip})
 	}
 	c.JSON(200, result)
 }
 
 func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
 	var req YamlRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "参数解析失败"})
-		return
-	}
+	if err := c.ShouldBindJSON(&req); err != nil { c.JSON(400, gin.H{"error": "参数解析失败"}); return }
 
 	var ingress networkingv1.Ingress
-	if err := yaml.Unmarshal([]byte(req.YamlContent), &ingress); err != nil {
-		c.JSON(400, gin.H{"error": "YAML 格式错误"})
-		return
-	}
-
+	if err := yaml.Unmarshal([]byte(req.YamlContent), &ingress); err != nil { c.JSON(400, gin.H{"error": "YAML 格式错误"}); return }
 	if ingress.Namespace == "" { ingress.Namespace = "default" }
+
 	client := k8sClient.NetworkingV1().Ingresses(ingress.Namespace)
 	existing, err := client.Get(context.TODO(), ingress.Name, metav1.GetOptions{})
 
@@ -352,11 +214,6 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 		return
 	}
 
-	// 下发配置后，强制清空缓存，以便页面立刻拿到最新状态
-	btSitesCache.Lock()
-	btSitesCache.expireTime = time.Now()
-	btSitesCache.Unlock()
-
-	TriggerSync(k8sClient, cfg)
-	c.JSON(200, gin.H{"message": "配置下发成功！后台正实时同步..."})
+	// 🌟 核心优化：下发完毕后不再主动调用 TriggerSync，而是交给 Watcher 事件去自动捕捉
+	c.JSON(200, gin.H{"message": "配置下发成功！事件监听器即将接管同步..."})
 }

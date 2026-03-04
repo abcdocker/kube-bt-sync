@@ -53,7 +53,7 @@ spec:
       serviceAccountName: kube-bt-sync-sa
       containers:
       - name: sync-server
-        image: harbor.frps.cn/kube-bt-sync-main/v2
+        image: harbor.frps.cn/kube-bt-sync-main/v1.10
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
