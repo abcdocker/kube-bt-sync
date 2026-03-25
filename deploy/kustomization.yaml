@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kube-bt-sync
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+
+# 按需取消注释：
+#  - service-nodeport.yaml
+#  - ingress.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/component: kube-bt-sync
+    includeSelectors: false
+
+# 构建镜像后替换 Deployment 中的 image，例如：
+# kubectl kustomize deploy | sed 's|ghcr.io/OWNER/kube-bt-sync:latest|registry.local/kube-bt-sync:1.0|'
+# 或: kubectl apply -k deploy/ && kubectl set image deployment/kube-bt-sync kube-bt-sync=...

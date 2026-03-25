@@ -1,0 +1,358 @@
+import React, { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatDistanceToNow } from "date-fns";
+import { zhCN } from "date-fns/locale";
+import { Pencil, Plus, Search, Filter, Trash2 } from "lucide-react";
+import PublishIngress from "@/components/PublishIngress";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { apiGetJson, apiGetText, apiPostJson, type IngressRow } from "@/lib/api";
+
+const IngressList: React.FC = () => {
+  const queryClient = useQueryClient();
+  const [q, setQ] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editNs, setEditNs] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editYaml, setEditYaml] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delRow, setDelRow] = useState<IngressRow | null>(null);
+  const [delBaota, setDelBaota] = useState(true);
+  const [delLoading, setDelLoading] = useState(false);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["ingresses-all"],
+    queryFn: () => apiGetJson<IngressRow[]>("/api/ingresses"),
+  });
+
+  const filtered = useMemo(() => {
+    const rows = data ?? [];
+    const s = q.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(s) ||
+        r.namespace.toLowerCase().includes(s) ||
+        r.hosts.some((h) => h.toLowerCase().includes(s))
+    );
+  }, [data, q]);
+
+  const openEdit = async (row: IngressRow) => {
+    setEditNs(row.namespace);
+    setEditName(row.name);
+    setEditYaml("");
+    setEditOpen(true);
+    setEditLoading(true);
+    try {
+      const yaml = await apiGetText(
+        `/api/ingress/raw?ns=${encodeURIComponent(row.namespace)}&name=${encodeURIComponent(row.name)}`
+      );
+      setEditYaml(yaml);
+    } catch (e) {
+      setEditYaml(`# 加载失败: ${(e as Error).message}`);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    setSaveLoading(true);
+    try {
+      await apiPostJson<{ message: string }>("/api/ingress/yaml", { yamlContent: editYaml });
+      setEditOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] });
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSaveLoading(false);
+    }
+  };
+
+  const openDeleteDialog = (row: IngressRow) => {
+    setDelRow(row);
+    const domain = row.hosts[0] ?? "";
+    setDelBaota(!!domain && row.managed);
+    setDelOpen(true);
+  };
+
+  const runDelete = async () => {
+    if (!delRow) return;
+    const domain = delRow.hosts[0] ?? "";
+    setDelLoading(true);
+    try {
+      await apiPostJson<{ message: string }>("/api/ingress/delete", {
+        namespace: delRow.namespace,
+        name: delRow.name,
+        domain,
+        deleteBaota: delBaota && !!domain,
+      });
+      setDelOpen(false);
+      setDelRow(null);
+      void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] });
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setDelLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col gap-6">
+      <PublishIngress onApplied={() => void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] })} />
+
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Ingress Rules</h1>
+          <p className="text-sm text-gray-500">
+            集群内全部 Ingress；「托管」表示已打 README 中的同步注解并由 kube-bt-sync 处理。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] })}>
+            <Plus className="size-4" />
+            刷新列表
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {(error as Error).message}
+        </div>
+      )}
+
+      <div className="bg-white rounded-t-2xl border border-b-0 border-gray-200 p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-3">
+          <div className="relative min-w-[200px] flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="按名称 / 命名空间 / Host 过滤..."
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-4 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <span className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600">
+            <Filter size={16} />
+            过滤
+          </span>
+        </div>
+        <div className="text-sm text-gray-500">
+          {isLoading
+            ? "加载中..."
+            : `共 ${filtered.length} / ${data?.length ?? 0} 条`}
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-b-2xl overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
+        <div className="overflow-auto flex-1">
+          <table className="w-full min-w-[900px] text-left border-collapse">
+            <thead>
+              <tr className="bg-[#F8FAFC] border-b border-gray-200">
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Name & Namespace
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Hosts
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Class
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  托管
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Age
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                  操作
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 text-sm">
+                    加载中...
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 text-sm">
+                    无 Ingress
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => {
+                  const t = item.createdAt ? new Date(item.createdAt) : null;
+                  const age =
+                    t && !Number.isNaN(t.getTime())
+                      ? formatDistanceToNow(t, { addSuffix: true, locale: zhCN })
+                      : "—";
+                  return (
+                    <tr key={`${item.namespace}/${item.name}`} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="font-bold text-gray-900 text-sm">{item.name}</div>
+                        <div className="text-xs text-gray-500 mt-1">{item.namespace}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col space-y-1">
+                          {(item.hosts.length ? item.hosts : ["—"]).map((host, i) => (
+                            <span
+                              key={i}
+                              className="inline-block w-max rounded-md border border-gray-200 bg-gray-100 px-2.5 py-1 font-mono text-xs text-gray-700"
+                            >
+                              {host}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm font-medium text-gray-600">
+                          {item.class || "—"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${
+                            item.managed
+                              ? "bg-emerald-50 text-emerald-600"
+                              : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {item.managed ? "已托管" : "—"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">{age}</td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void openEdit(item)}
+                          >
+                            <Pencil className="size-4" />
+                            编辑
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => openDeleteDialog(item)}
+                          >
+                            <Trash2 className="size-4" />
+                            删除
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <AlertDialog
+        open={delOpen}
+        onOpenChange={(o) => {
+          if (!delLoading) setDelOpen(o);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              删除 Ingress {delRow ? `${delRow.namespace}/${delRow.name}` : ""}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-left space-y-3">
+              <span className="block text-gray-700">
+                集群中的 Ingress 将立即删除。若需同步清理宝塔上的站点与反代，请勾选下方选项。
+              </span>
+              {(delRow?.hosts[0] ?? "") !== "" && (
+                <div className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <Checkbox
+                    id="del-baota"
+                    checked={delBaota}
+                    onCheckedChange={(v) => setDelBaota(v === true)}
+                    disabled={delLoading}
+                  />
+                  <div className="grid gap-1">
+                    <Label htmlFor="del-baota" className="text-sm font-medium text-gray-900 cursor-pointer">
+                      同时删除宝塔站点与反代
+                    </Label>
+                    <span className="text-xs text-gray-500 font-mono">{delRow?.hosts[0]}</span>
+                  </div>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={delLoading}>取消</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={delLoading}
+              onClick={() => void runDelete()}
+            >
+              {delLoading ? "删除中…" : "确认删除"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent
+          className="max-h-[90vh] w-full max-w-4xl overflow-hidden flex flex-col gap-0 sm:max-w-4xl"
+          showCloseButton
+        >
+          <DialogHeader>
+            <DialogTitle>
+              编辑 Ingress {editNs}/{editName}
+            </DialogTitle>
+          </DialogHeader>
+          {editLoading ? (
+            <p className="text-sm text-gray-500">加载 YAML…</p>
+          ) : (
+            <textarea
+              className="min-h-[400px] w-full flex-1 rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-900"
+              value={editYaml}
+              onChange={(e) => setEditYaml(e.target.value)}
+            />
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+              取消
+            </Button>
+            <Button type="button" disabled={saveLoading || editLoading} onClick={() => void saveEdit()}>
+              {saveLoading ? "保存中…" : "保存并应用"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default IngressList;

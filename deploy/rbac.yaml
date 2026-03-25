@@ -1,0 +1,59 @@
+# 完整功能（Ingress 同步 + 集群控制台 UI + YAML 下发）所需权限。
+# 若仅需 Ingress 同步，可改为仅保留 networking.k8s.io/ingresses 规则。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-bt-sync
+  namespace: kube-bt-sync
+  labels:
+    app.kubernetes.io/name: kube-bt-sync
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-bt-sync
+  labels:
+    app.kubernetes.io/name: kube-bt-sync
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes", "persistentvolumeclaims", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-bt-sync
+  labels:
+    app.kubernetes.io/name: kube-bt-sync
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-bt-sync
+subjects:
+  - kind: ServiceAccount
+    name: kube-bt-sync
+    namespace: kube-bt-sync

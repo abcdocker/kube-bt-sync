@@ -1,0 +1,13 @@
+.git
+.gitignore
+*.md
+.env*
+!.env.example
+react/node_modules
+react/dist
+data
+*.log
+.DS_Store
+dist
+helm/**/*.tgz
+deploy/**/*.md

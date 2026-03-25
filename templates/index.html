@@ -2,144 +2,438 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>kube-bt-sync 控制台</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-    <script src="https://unpkg.com/element-plus"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kube-BT-Sync 边缘网关控制台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .yaml-editor { font-family: monospace; font-size: 14px; width: 100%; height: 350px; background-color: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; border: none; outline: none; resize: vertical;}
+        body { background-color: #f4f7f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .navbar { background: linear-gradient(135deg, #0f2027, #203a43, #2c5364); }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card-header { background-color: white; border-bottom: 1px solid #f0f0f0; font-weight: bold; padding: 15px 20px; border-radius: 12px 12px 0 0 !important; }
+        .status-badge { font-size: 0.85rem; padding: 5px 10px; }
+        .guide-box { margin-top: 15px; padding: 15px; background-color: #f8fbff; border-left: 4px solid #0d6efd; border-radius: 6px; font-size: 13.5px; color: #444; }
+        .code-tag { background: #e9ecef; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #d63384; font-weight: bold;}
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .component-detail { font-size: 0.85rem; color: #6c757d; margin-top: 4px; margin-left: 28px; }
+        .nav-tabs .nav-link { color: #495057; font-weight: 500; }
+        .nav-tabs .nav-link.active { color: #0d6efd; font-weight: bold; }
+        .switch-wrapper { display: flex; align-items: center; height: 38px; margin-top: 28px; } 
     </style>
 </head>
 <body>
-    <div id="app">
-        <div class="header">
-            <h2>🚀 kube-bt-sync 边缘网关同步中心</h2>
-            <el-button type="primary" @click="openDialog"> + 暴露新服务</el-button>
+
+<nav class="navbar navbar-dark mb-4 shadow-sm">
+    <div class="container">
+        <a class="navbar-brand" href="#"><i class="fas fa-network-wired me-2"></i>Kube-BT-Sync 边缘网关</a>
+        <button class="btn btn-outline-light btn-sm" id="refreshBtn" onclick="refreshAll()">
+            <i class="fas fa-sync-alt"></i> 手动刷新
+        </button>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="fas fa-cloud text-primary me-2"></i>宝塔云端面板</div>
+                <div class="card-body">
+                    <h5 id="baota-status" class="mb-3">⏳ 加载中...</h5>
+                    <p class="text-muted small mb-1">API 地址: <span id="baota-url">...</span></p>
+                    <p class="text-muted small">系统状态: <span id="baota-msg">...</span></p>
+                </div>
+            </div>
         </div>
 
-        <el-card class="box-card">
-            <template #header>
-                <div class="card-header">
-                    <span>已托管路由状态</span>
-                    <el-button style="float: right; padding: 3px 0" text @click="fetchStatus">刷新数据</el-button>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="fas fa-dharmachakra text-info me-2"></i>K8s 内部基础设施</div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div id="metallb-status">⏳ MetalLB: 检查中...</div>
+                        <div class="component-detail" id="metallb-detail"></div>
+                    </div>
+                    <div>
+                        <div id="ingress-status">⏳ Ingress 控制器: 检查中...</div>
+                        <div class="component-detail" id="ingress-detail"></div>
+                    </div>
                 </div>
-            </template>
-            <el-table :data="statusList" style="width: 100%" v-loading="loading">
-                <el-table-column prop="namespace" label="命名空间" width="120"></el-table-column>
-                <el-table-column prop="name" label="资源名称" width="180"></el-table-column>
-                <el-table-column prop="domain" label="访问域名">
-                    <template #default="scope">
-                        <el-link type="primary" :href="'https://'+scope.row.domain" target="_blank">{{ scope.row.domain }}</el-link>
-                    </template>
-                </el-table-column>
-                <el-table-column prop="ddnsPort" label="DDNS 端口" width="120">
-                    <template #default="scope"><el-tag type="warning">{{ scope.row.ddnsPort }}</el-tag></template>
-                </el-table-column>
-                <el-table-column prop="status" label="状态" width="100">
-                    <template #default="scope"><el-tag type="success">{{ scope.row.status }}</el-tag></template>
-                </el-table-column>
-            </el-table>
-        </el-card>
+            </div>
+        </div>
 
-        <el-dialog v-model="dialogVisible" title="配置 Ingress 规则" width="650px" destroy-on-close>
-            <el-tabs v-model="activeTab" @tab-change="handleTabChange">
-                <el-tab-pane label="📝 表单模式 (新手友好)" name="form">
-                    <el-form :model="form" label-width="120px" style="margin-top: 15px;">
-                        <el-form-item label="规则名称"><el-input v-model="form.name"></el-input></el-form-item>
-                        <el-form-item label="业务域名"><el-input v-model="form.domain" placeholder="如: app.i4t.com"></el-input></el-form-item>
-                        <el-form-item label="后端 Service"><el-input v-model="form.serviceName"></el-input></el-form-item>
-                        <el-form-item label="后端端口"><el-input-number v-model="form.servicePort" :min="1"></el-input-number></el-form-item>
-                        <el-form-item label="指定 DDNS 端口"><el-input v-model="form.customPort" placeholder="留空使用全局配置"></el-input></el-form-item>
-                    </el-form>
-                </el-tab-pane>
-                <el-tab-pane label="💻 YAML 模式 (极客专属)" name="yaml">
-                    <el-alert title="您可以直接在此修改 YAML 结构，提交后将原样应用到 K8s。" type="warning" :closable="false" style="margin-bottom: 10px;"></el-alert>
-                    <textarea v-model="yamlContent" class="yaml-editor" spellcheck="false"></textarea>
-                </el-tab-pane>
-            </el-tabs>
-            <template #footer>
-                <el-button @click="dialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="submitConfig" :loading="submitLoading">下发配置</el-button>
-            </template>
-        </el-dialog>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="fas fa-home text-success me-2"></i>家庭边缘节点 (DDNS)</div>
+                <div class="card-body">
+                    <h5 id="ddns-status" class="mb-2">⏳ 加载中...</h5>
+                    <p class="text-muted small mb-1">DDNS 域名: <span id="ddns-host" class="fw-bold text-dark">...</span></p>
+                    <p class="text-muted small mb-1">解析 IP: <span id="ddns-ips" class="fw-bold">...</span></p>
+                    <p class="text-muted small mb-1"><span id="ddns-msg">...</span></p>
+                    <p class="text-muted small mb-0 border-top pt-2 mt-2">
+                        <i class="fas fa-shield-alt text-success me-1"></i> HTTPS 探活: <span id="ddns-443-status">检查中...</span>
+                    </p>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <script>
-        const { createApp, ref, onMounted } = Vue;
-        const app = createApp({
-            setup() {
-                const statusList = ref([]);
-                const loading = ref(false);
-                const submitLoading = ref(false);
-                const dialogVisible = ref(false);
-                const activeTab = ref('form');
-                const yamlContent = ref('');
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="guide-box shadow-sm">
+                <div class="fw-bold text-primary mb-2"><i class="fas fa-route me-1"></i> 路由器端口转发 (NAT) 配置作业</div>
+                为保障内外网流量精准穿透，请在您的主路由器中配置 <b>两组</b> 端口映射规则 (指向 K8s 物理节点 <span class="code-tag" id="guide-int-ip">获取中...</span>)：
+                <ul class="mt-2 mb-2" style="line-height: 1.8;">
+                    <li><b>【规则 1 - 宝塔反代专用】</b> 外部端口: <span class="code-tag" id="guide-ext-port">获取中...</span> ➜ 内部端口: <span class="code-tag">80</span> <span class="text-muted small">(接收宝塔 HTTP 流量)</span></li>
+                    <li><b>【规则 2 - HTTPS 直连/证书】</b> 外部端口: <span class="code-tag" id="guide-ext-https-port">获取中...</span> ➜ 内部端口: <span class="code-tag">443</span> <span class="text-muted small">(标准 HTTPS 与直连通信必需)</span></li>
+                </ul>
+                <div class="small text-muted mt-2">
+                    <i class="fas fa-info-circle"></i> 提示：若您的宽带封锁了标准端口，您可以修改环境变量 <code>HTTPS_PORT</code> 来自定义外部 HTTPS 探测与展示端口。
+                </div>
+            </div>
+        </div>
+    </div>
 
-                const form = ref({
-                    name: 'my-app-ingress', namespace: 'default', domain: 'app.i4t.com',
-                    serviceName: 'my-svc', servicePort: 80, customPort: ''
-                });
+    <div class="card">
+        <div class="card-header"><i class="fas fa-magic me-2"></i>发布本地服务到公网</div>
+        <div class="card-body">
+            <ul class="nav nav-tabs mb-3" id="configTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="gui-tab" data-bs-toggle="tab" data-bs-target="#gui-mode" type="button" role="tab"><i class="fas fa-mouse-pointer me-1"></i> 可视化向导</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="yaml-tab" data-bs-toggle="tab" data-bs-target="#yaml-mode" type="button" role="tab"><i class="fas fa-code me-1"></i> YAML 极客模式</button>
+                </li>
+            </ul>
 
-                const fetchStatus = () => {
-                    loading.value = true;
-                    fetch('/api/status').then(res => res.json()).then(data => {
-                        statusList.value = data || []; loading.value = false;
-                    });
-                };
+            <div class="tab-content">
+                <div class="tab-pane fade show active" id="gui-mode" role="tabpanel">
+                    <div class="row g-3">
+                        <div class="col-md-2">
+                            <label class="form-label text-muted small fw-bold">命名空间 (Namespace)</label>
+                            <select class="form-select" id="gui-ns" onchange="onNamespaceChange()">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label text-muted small fw-bold">目标服务 (Service)</label>
+                            <select class="form-select" id="gui-svc" onchange="onServiceChange()">
+                                <option value="">请先选择</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label text-muted small fw-bold">服务端口 (Port)</label>
+                            <select class="form-select" id="gui-port">
+                                <option value="">无</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label text-muted small fw-bold">访问域名 (Domain)</label>
+                            <input type="text" class="form-control" id="gui-domain" placeholder="如: nas.yourdomain.com">
+                        </div>
+                        <div class="col-md-2">
+                            <div class="form-check form-switch switch-wrapper">
+                                <input class="form-check-input" type="checkbox" id="gui-https" checked style="cursor: pointer; transform: scale(1.2); margin-right: 10px;">
+                                <label class="form-check-label text-muted small fw-bold" for="gui-https" style="cursor: pointer;">开启 HTTPS (SSL)</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3 text-end">
+                        <button class="btn btn-primary px-4" id="btn-gui-submit" onclick="applyGuiMode()">
+                            <i class="fas fa-paper-plane me-1"></i> 自动生成并下发
+                        </button>
+                    </div>
+                </div>
 
-                const generateYamlFromForm = () => {
-                    const ingress = {
-                        apiVersion: 'networking.k8s.io/v1', kind: 'Ingress',
-                        metadata: {
-                            name: form.value.name, namespace: form.value.namespace,
-                            annotations: { 'kubernetes.io/ingress.class': 'nginx', 'i4t.com/baota-sync': 'true' }
-                        },
-                        spec: { rules: [{
-                            host: form.value.domain,
-                            http: { paths: [{
-                                path: '/', pathType: 'Prefix',
-                                backend: { service: { name: form.value.serviceName, port: { number: form.value.servicePort } } }
-                            }]}
-                        }]}
-                    };
-                    if (form.value.customPort) { ingress.metadata.annotations['i4t.com/ddns-port'] = form.value.customPort; }
-                    yamlContent.value = jsyaml.dump(ingress);
-                };
+                <div class="tab-pane fade" id="yaml-mode" role="tabpanel">
+                    <textarea id="yamlInput" class="form-control text-dark bg-light" rows="14" style="font-family: monospace; font-size: 13px;">
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: default
+  annotations:
+    kube-bt-sync.io/baota-sync: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: demo.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-service
+            port:
+              number: 80</textarea>
+                    <div class="mt-3 d-flex justify-content-between">
+                        <span class="text-muted small mt-2"><i class="fas fa-info-circle"></i> 编辑保存后将自动覆盖集群原配置，并触发事件监听。</span>
+                        <button class="btn btn-primary px-4" id="btn-yaml-submit" onclick="applyYamlMode()">
+                            <i class="fas fa-paper-plane me-1"></i> 应用 / 覆盖集群配置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-                const handleTabChange = (name) => {
-                    if (name === 'yaml') generateYamlFromForm();
-                };
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="fas fa-list me-2"></i>已同步的路由规则 </span>
+        </div>
+        <div class="card-body p-0" style="overflow-x: auto;">
+            <table class="table table-hover mb-0" style="white-space: nowrap;">
+                <thead class="table-light">
+                    <tr>
+                        <th>命名空间</th><th>路由名称</th><th>访问域名</th><th>协议</th>
+                        <th>K8s 版本(RV)</th><th>创建时间</th><th>修改时间</th><th>状态</th><th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="rules-tbody">
+                    <tr><td colspan="9" class="text-center text-muted py-4">请点击刷新获取数据</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
-                const openDialog = () => {
-                    activeTab.value = 'form'; dialogVisible.value = true;
-                };
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-                const submitConfig = () => {
-                    submitLoading.value = true;
-                    // 无论当前在哪个 Tab，最终提交的都是 YAML (如果停留在表单，先生成一下)
-                    if (activeTab.value === 'form') generateYamlFromForm();
-                    
-                    fetch('/api/ingress/yaml', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ yamlContent: yamlContent.value })
-                    }).then(res => res.json()).then(data => {
-                        submitLoading.value = false;
-                        if(data.error) { ElementPlus.ElMessage.error(data.error); } 
-                        else {
-                            ElementPlus.ElMessage.success(data.message);
-                            dialogVisible.value = false; fetchStatus();
-                        }
-                    });
-                };
+<script>
+    let globalExtPort = "38333"; 
+    let allServices = []; 
 
-                onMounted(() => fetchStatus());
-                return { statusList, loading, fetchStatus, dialogVisible, activeTab, form, yamlContent, handleTabChange, submitConfig, submitLoading, openDialog };
-            }
+    async function refreshAll() {
+        const btn = document.getElementById('refreshBtn');
+        const icon = btn.querySelector('i');
+        icon.classList.add('spin');
+        btn.disabled = true;
+
+        try {
+            await Promise.all([ fetchSystemCheck(), fetchNamespaces(), fetchServices(), fetchRules() ]);
+        } catch (error) { console.error("刷新失败", error); } finally {
+            icon.classList.remove('spin');
+            btn.disabled = false;
+        }
+    }
+
+    async function fetchSystemCheck() {
+        const res = await fetch('/api/system/check');
+        const data = await res.json();
+        
+        const btStatus = document.getElementById('baota-status');
+        if (data.baota.status === 'success') {
+            btStatus.innerHTML = '<span class="badge bg-success status-badge"><i class="fas fa-check-circle"></i> 运行正常</span>';
+        } else {
+            btStatus.innerHTML = '<span class="badge bg-danger status-badge"><i class="fas fa-times-circle"></i> 连接异常</span>';
+        }
+        document.getElementById('baota-url').innerText = data.baota.url;
+        document.getElementById('baota-msg').innerText = data.baota.msg;
+
+        const ddnsStatus = document.getElementById('ddns-status');
+        if (data.ddns.status === 'success') {
+            ddnsStatus.innerHTML = '<span class="badge bg-success status-badge"><i class="fas fa-check-circle"></i> 穿透正常</span>';
+        } else {
+            ddnsStatus.innerHTML = `<span class="badge bg-warning text-dark status-badge"><i class="fas fa-exclamation-triangle"></i> ${data.ddns.status === 'warning' ? '端口不通' : '解析异常'}</span>`;
+        }
+        
+        // 🌟 重新绑定域名和 IP
+        document.getElementById('ddns-host').innerText = data.ddns.host;
+        document.getElementById('ddns-ips').innerText = data.ddns.ips ? data.ddns.ips.join(', ') : '无';
+        document.getElementById('ddns-msg').innerText = data.ddns.msg;
+
+        const httpsPort = data.ddns.httpsPort || "443";
+        const p443 = document.getElementById('ddns-443-status');
+        if(data.ddns.port443) {
+            p443.innerHTML = `<span class="text-success fw-bold">已连通 (外网 ${httpsPort} 端口放行)</span>`;
+        } else {
+            p443.innerHTML = `<span class="text-danger">未连通 (外网 ${httpsPort} 端口未映射或被拦截)</span>`;
+        }
+
+        const extHttpsPortSpan = document.getElementById('guide-ext-https-port');
+        if(extHttpsPortSpan) extHttpsPortSpan.innerText = httpsPort;
+
+        const portMatch = data.ddns.msg.match(/\((\d+)\)/);
+        if (portMatch) globalExtPort = portMatch[1];
+        document.getElementById('guide-ext-port').innerText = globalExtPort;
+
+        document.getElementById('metallb-status').innerHTML = data.k8s.metallbInstalled 
+            ? '✅ MetalLB: <span class="text-success fw-bold">已安装</span>' : '❌ MetalLB: <span class="text-danger">未检测到</span>';
+        
+        document.getElementById('ingress-status').innerHTML = data.k8s.ingressInstalled 
+            ? '✅ Ingress 控制器: <span class="text-success fw-bold">已安装</span>' : '❌ Ingress 控制器: <span class="text-danger">未检测到</span>';
+
+        const realLanIP = data.k8s.nodeIP || "未获取到 Node IP";
+        document.getElementById('guide-int-ip').innerText = realLanIP;
+    }
+
+    async function fetchNamespaces() {
+        const res = await fetch('/api/namespaces');
+        const namespaces = await res.json();
+        const nsSelect = document.getElementById('gui-ns');
+        nsSelect.innerHTML = '<option value="">请选择...</option>';
+        namespaces.forEach(ns => {
+            const selected = ns === 'default' ? 'selected' : '';
+            nsSelect.innerHTML += `<option value="${ns}" ${selected}>${ns}</option>`;
         });
-        app.use(ElementPlus); app.mount('#app');
-    </script>
+    }
+
+    async function fetchServices() {
+        const res = await fetch('/api/services');
+        allServices = await res.json(); 
+        onNamespaceChange();
+    }
+
+    function onNamespaceChange() {
+        const currentNs = document.getElementById('gui-ns').value;
+        const svcSelect = document.getElementById('gui-svc');
+        svcSelect.innerHTML = '<option value="">请选择服务...</option>';
+        const filteredServices = allServices.filter(s => s.namespace === currentNs);
+        filteredServices.forEach(s => { svcSelect.innerHTML += `<option value="${s.name}">${s.name}</option>`; });
+        onServiceChange();
+    }
+
+    function onServiceChange() {
+        const currentNs = document.getElementById('gui-ns').value;
+        const currentSvc = document.getElementById('gui-svc').value;
+        const portSelect = document.getElementById('gui-port');
+        portSelect.innerHTML = '';
+        const targetService = allServices.find(s => s.namespace === currentNs && s.name === currentSvc);
+        if (targetService && targetService.ports && targetService.ports.length > 0) {
+            targetService.ports.forEach(port => { portSelect.innerHTML += `<option value="${port}">${port}</option>`; });
+        } else {
+            portSelect.innerHTML = '<option value="">无可用端口</option>';
+        }
+    }
+
+    async function fetchRules() {
+        try {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            const tbody = document.getElementById('rules-tbody');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">暂无同步规则</td></tr>';
+                return;
+            }
+            let newHtml = '';
+            data.forEach(item => {
+                let badge = item.scheme === 'https' ? 'bg-success' : 'bg-secondary';
+                newHtml += `
+                    <tr>
+                        <td>${item.namespace}</td>
+                        <td class="fw-bold">${item.name}</td>
+                        <td><a href="${item.scheme}://${item.domain}" target="_blank" class="text-decoration-none">${item.domain}</a></td>
+                        <td><span class="badge ${badge}"><i class="fas fa-lock${item.scheme === 'https'?'':'-open'}"></i> ${item.scheme.toUpperCase()}</span></td>
+                        <td><code>v${item.version}</code></td>
+                        <td class="small text-muted">${item.createdAt}</td>
+                        <td class="small text-info">${item.modifiedAt}</td>
+                        <td class="fw-bold text-success">${item.status}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-primary me-1" onclick="editIngress('${item.namespace}', '${item.name}')"><i class="fas fa-edit"></i> 编辑</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteIngress('${item.namespace}', '${item.name}', '${item.domain}')"><i class="fas fa-trash"></i> 删除</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = newHtml;
+        } catch (e) { console.error(e); }
+    }
+
+    async function editIngress(ns, name) {
+        try {
+            const res = await fetch(`/api/ingress/raw?ns=${ns}&name=${name}`);
+            if (!res.ok) { alert("获取详情失败"); return; }
+            const yamlText = await res.text();
+            document.getElementById('yamlInput').value = yamlText;
+            const yamlTab = new bootstrap.Tab(document.getElementById('yaml-tab'));
+            yamlTab.show();
+            document.getElementById('yamlInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (error) { alert('网络异常'); }
+    }
+
+    function applyGuiMode() {
+        const ns = document.getElementById('gui-ns').value;
+        const svc = document.getElementById('gui-svc').value;
+        const port = document.getElementById('gui-port').value;
+        const domain = document.getElementById('gui-domain').value.trim();
+        const enableHttps = document.getElementById('gui-https').checked;
+
+        if (!ns || !svc || !port || !domain) { alert('⚠️ 请把命名空间、服务、端口和域名填写完整！'); return; }
+
+        const tlsBlock = enableHttps ? `\n  tls:\n  - hosts:\n    - ${domain}\n    secretName: ${svc}-tls` : '';
+
+        const yamlContent = `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${svc}-ingress
+  namespace: ${ns}
+  annotations:
+    kube-bt-sync.io/baota-sync: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx${tlsBlock}
+  rules:
+  - host: ${domain}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${svc}
+            port:
+              number: ${parseInt(port)}`;
+
+        sendYamlRequest(yamlContent, document.getElementById('btn-gui-submit'));
+    }
+
+    function applyYamlMode() {
+        const yamlContent = document.getElementById('yamlInput').value;
+        sendYamlRequest(yamlContent, document.getElementById('btn-yaml-submit'));
+    }
+
+    async function sendYamlRequest(yamlContent, btnElement) {
+        const originalText = btnElement.innerHTML;
+        btnElement.disabled = true;
+        btnElement.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> 处理中...';
+
+        try {
+            const res = await fetch('/api/ingress/yaml', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({yamlContent})
+            });
+            const result = await res.json();
+            if (res.ok) { alert(result.message); fetchRules(); } else { alert('操作失败: ' + result.error); }
+        } catch (e) { alert('网络请求异常'); } finally {
+            btnElement.disabled = false;
+            btnElement.innerHTML = originalText;
+        }
+    }
+
+    async function deleteIngress(ns, name, domain) {
+        let deleteBaota = false;
+        if (domain && domain.trim()) {
+            deleteBaota = confirm(
+                `删除 Ingress [${ns}/${name}]？\n主域名：${domain}\n\n「确定」= 同时删除宝塔站点与反代\n「取消」= 仅从集群删除 Ingress（保留宝塔）`
+            );
+        } else {
+            if (!confirm(`删除 Ingress [${ns}/${name}]？\n（无 Host，仅删除集群中的资源）`)) return;
+        }
+        try {
+            const res = await fetch('/api/ingress/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({namespace: ns, name: name, domain: domain, deleteBaota: deleteBaota})
+            });
+            const result = await res.json();
+            if (res.ok) { alert(result.message); fetchRules(); } else { alert('删除失败: ' + result.error); }
+        } catch (e) { alert('网络请求异常'); }
+    }
+
+    window.onload = () => { refreshAll(); };
+</script>
 </body>
 </html>

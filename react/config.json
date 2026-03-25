@@ -1,0 +1,26 @@
+{
+  "routes": [
+    {
+      "path": "/",
+      "src": "src/pages/Dashboard.tsx"
+    },
+    {
+      "path": "/ingress",
+      "src": "src/pages/IngressList.tsx"
+    },
+    {
+      "path": "/baota",
+      "src": "src/pages/BaotaSync.tsx"
+    },
+    {
+      "path": "/account/settings",
+      "src": "src/pages/account/AccountSettings.tsx"
+    }
+  ],
+  "components": [
+    { "name": "AppLayout", "src": "src/components/AppLayout.tsx" },
+    { "name": "Sidebar", "src": "src/components/Sidebar.tsx" },
+    { "name": "Header", "src": "src/components/Header.tsx" },
+    { "name": "StatCard", "src": "src/components/StatCard.tsx" }
+  ]
+}

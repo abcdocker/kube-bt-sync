@@ -1,0 +1,185 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--fontSans);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --shadow-x: var(--shadow-x);
+  --shadow-y: var(--shadow-y);
+  --shadow-blur: var(--shadow-blur);
+  --shadow-spread: var(--shadow-spread);
+  --shadow-color: var(--shadow-color);
+}
+:root {
+  --fontSans: "Inter";
+  --background: rgba(255, 255, 255, 1);
+  --foreground: rgba(32, 32, 32, 1);
+  --card: rgba(255, 255, 255, 1);
+  --card-foreground: rgba(32, 32, 32, 1);
+  --popover: rgba(255, 255, 255, 1);
+  --popover-foreground: rgba(32, 32, 32, 1);
+  --primary: rgba(136, 72, 249, 1);
+  --primary-foreground: rgba(255, 255, 255, 1);
+  --secondary: rgba(241, 228, 251, 1);
+  --secondary-foreground: rgba(32, 32, 32, 1);
+  --muted: rgba(246, 246, 246, 1);
+  --muted-foreground: rgba(127, 127, 127, 1);
+  --accent: rgba(242, 242, 242, 1);
+  --accent-foreground: rgba(32, 32, 32, 1);
+  --destructive: rgba(244, 22, 95, 1);
+  --destructive-foreground: rgba(255, 255, 255, 1);
+  --border: rgba(224, 223, 223, 1);
+  --input: rgba(226, 226, 226, 1);
+  --ring: rgba(189, 149, 255, 1);
+  --chart-1: rgba(238, 221, 252, 1);
+  --chart-2: rgba(195, 150, 237, 1);
+  --chart-3: rgba(238, 221, 252, 1);
+  --chart-4: rgba(195, 150, 237, 1);
+  --chart-5: rgba(238, 221, 252, 1);
+  --radius: 0.5rem;
+  --sidebar: rgb(250 250 250);
+  --sidebar-foreground: rgb(10 10 10);
+  --sidebar-primary: rgb(23 23 23);
+  --sidebar-primary-foreground: rgb(250 250 250);
+  --sidebar-accent: rgb(245 245 245);
+  --sidebar-accent-foreground: rgb(23 23 23);
+  --sidebar-border: rgb(229 229 229);
+  --sidebar-ring: rgb(161 161 161);
+  --shadow-x: 0px;
+  --shadow-y: 0px;
+  --shadow-blur: 4px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 1;
+  --shadow-color: rgba(255, 255, 255, 1);	
+}
+
+.dark {
+  --background: rgb(10, 10, 10);
+  --foreground: rgb(250, 250, 250);
+  --card: rgb(23, 23, 23);
+  --card-foreground: rgb(250, 250, 250);
+  --popover: rgb(23, 23, 23);
+  --popover-foreground: rgb(250, 250, 250);
+  --primary: rgb(229, 229, 229);
+  --primary-foreground: rgb(23, 23, 23);
+  --secondary: rgb(38, 38, 38);
+  --secondary-foreground: rgb(250, 250, 250);
+  --muted: rgb(38, 38, 38);
+  --muted-foreground: rgb(161, 161, 161);
+  --accent: rgb(38, 38, 38);
+  --accent-foreground: rgb(250, 250, 250);
+  --destructive: rgb(255, 100, 103);
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: rgb(115, 115, 115);
+  --chart-1: rgb(20, 71, 230);
+  --chart-2: rgb(0, 188, 125);
+  --chart-3: rgb(253, 154, 0);
+  --chart-4: rgb(173, 70, 255);
+  --chart-5: rgb(255, 32, 86);
+  --shadow-spread: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 4px;
+  --shadow-x: 0px;
+  --shadow-color: rgba(0, 0, 0, 1);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  #root {
+    height: 100%;
+    min-height: 100vh;
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@layer utilities {
+  .shadow-custom {
+    box-shadow: var(--shadow-x) var(--shadow-y) var(--shadow-blur) var(--shadow-spread) var(--shadow-color);
+  }
+
+  /** 主内容区右侧：细轨道 + 圆角滑块（贴近系统纵向滚动条观感） */
+  .app-main-scroll {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: #b4b4b8 #f5f5f5;
+  }
+  .app-main-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .app-main-scroll::-webkit-scrollbar-track {
+    background: #f5f5f5;
+    border-radius: 9999px;
+  }
+  .app-main-scroll::-webkit-scrollbar-thumb {
+    background: #b4b4b8;
+    border-radius: 9999px;
+    border: 2px solid #f5f5f5;
+  }
+  .app-main-scroll::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+  }
+}
+
+/* vCenter SSH：限制 xterm 外层高度，由 .xterm-viewport 内部滚动，避免整页被 scroll-area 撑开 */
+.vc-ssh-xterm-host {
+  position: relative;
+  contain: layout style;
+}
+.vc-ssh-xterm-host .xterm {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+}
+.vc-ssh-xterm-host .xterm .xterm-viewport {
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow-y: auto !important;
+}

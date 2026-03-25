@@ -1,0 +1,21 @@
+# 可选：用 Ingress 暴露 Web 控制台（需集群已安装 Ingress Controller）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kube-bt-sync
+  namespace: kube-bt-sync
+  labels:
+    app.kubernetes.io/name: kube-bt-sync
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: kube-bt-sync.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-bt-sync
+                port:
+                  number: 8080

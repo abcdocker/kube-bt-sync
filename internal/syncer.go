@@ -13,14 +13,26 @@ import (
 )
 
 type ProxyTarget struct {
-	Domain    string
-	TargetURL string
+	Domain       string
+	TargetURL    string
+	BaotaHTTPS   bool
+	BaotaSSLCert string // 覆盖全局 BAOTA_SSL_CERT_NAME，可为空
 }
 
-func StartSyncer(k8sClient *kubernetes.Clientset, cfg Config) {
-	log.Printf("同步引擎启动 (间隔: %v)...", cfg.SyncInterval)
+func StartSyncer(app *ServerApp) {
+	log.Printf("同步引擎启动 (间隔: %v)...", app.Cfg().SyncInterval)
 	for {
-		syncOnce(k8sClient, cfg)
+		cfg := app.Cfg()
+		if !cfg.IngressBaotaSyncEnabled {
+			<-time.After(cfg.SyncInterval)
+			continue
+		}
+		k8s := app.K8s()
+		if k8s != nil && strings.TrimSpace(cfg.BaotaURL) != "" && strings.TrimSpace(cfg.BaotaAPIKey) != "" {
+			syncOnce(k8s, cfg)
+		} else if cfg.IngressBaotaSyncEnabled {
+			log.Printf("跳过 Ingress↔宝塔同步：K8s 或宝塔未配置完整")
+		}
 		<-time.After(cfg.SyncInterval)
 	}
 }
@@ -34,44 +46,62 @@ func syncOnce(clientset *kubernetes.Clientset, cfg Config) {
 
 	var targets []ProxyTarget
 	for _, ing := range ingresses.Items {
-		if val, ok := ing.Annotations["i4t.com/baota-sync"]; ok && val == "true" {
-			targetPort := cfg.DefaultPort
-			if customPort, hasCustom := ing.Annotations["i4t.com/ddns-port"]; hasCustom && customPort != "" {
-				targetPort = customPort
-			}
+		if !IsManagedIngress(ing.Annotations) {
+			continue
+		}
+		targetPort := cfg.DefaultPort
+		if customPort, hasCustom := ing.Annotations["i4t.com/ddns-port"]; hasCustom && customPort != "" {
+			targetPort = customPort
+		} else if customPort, hasCustom := ing.Annotations["kube-bt-sync.io/ddns-port"]; hasCustom && customPort != "" {
+			targetPort = customPort
+		}
 
-			targetURL := fmt.Sprintf("http://%s:%s", cfg.DDNSHost, targetPort)
-			for _, rule := range ing.Spec.Rules {
-				if rule.Host != "" {
-					targets = append(targets, ProxyTarget{Domain: rule.Host, TargetURL: targetURL})
-				}
+		https, sslCert := BaotaHTTPSFromAnnotations(ing.Annotations)
+		targetURL := fmt.Sprintf("http://%s:%s", cfg.DDNSHost, targetPort)
+		for _, rule := range ing.Spec.Rules {
+			if rule.Host != "" {
+				targets = append(targets, ProxyTarget{
+					Domain:       rule.Host,
+					TargetURL:    targetURL,
+					BaotaHTTPS:   https,
+					BaotaSSLCert: sslCert,
+				})
 			}
 		}
 	}
 
 	for _, target := range targets {
 		ensureBaotaSiteAndProxy(cfg, target)
+		if target.BaotaHTTPS {
+			if err := EnsureBaotaHTTPS(cfg, target.Domain, target.BaotaSSLCert); err != nil {
+				log.Printf("[%s] 宝塔 HTTPS: %v", target.Domain, err)
+			}
+		}
 	}
 }
 
 func ensureBaotaSiteAndProxy(cfg Config, target ProxyTarget) {
 	webnameMap := map[string]interface{}{"domain": target.Domain, "domainlist": []string{}, "count": 0}
 	webnameJSON, _ := json.Marshal(webnameMap)
-	
-	CallBaotaAPI(cfg, "/site?action=AddSite", map[string]string{
+
+	_, err := CallBaotaAPI(cfg, "/site?action=AddSite", map[string]string{
 		"webname": string(webnameJSON),
 		"path":    "/www/wwwroot/" + target.Domain,
 		"type_id": "0", "type": "PHP", "version": "00", "port": "80",
-		"ps":      "[kube-bt-sync]", // 修改为新的标识
+		"ps": "[kube-bt-sync]",
 	})
+	if err != nil && !IsBaotaAlreadyExists(err) {
+		log.Printf("[%s] AddSite: %v", target.Domain, err)
+	}
 
-	_, err := CallBaotaAPI(cfg, "/proxy?action=CreateProxy", map[string]string{
-		"proxysite": target.Domain, "proxyname": "k8s-ingress-proxy",
+	proxyName := ProxyNameForDomain(target.Domain)
+	_, err = CallBaotaAPI(cfg, "/proxy?action=CreateProxy", map[string]string{
+		"proxysite": target.Domain,
+		"proxyname": proxyName,
 		"todomain":  target.TargetURL, "proxydir": "/", "type": "1",
-		"tohost":    "$host", "advanced": "0", "cache": "0", "cachetime": "1",
+		"tohost": "$host", "advanced": "0", "cache": "0", "cachetime": "1",
 	})
-	
-	if err != nil && !strings.Contains(err.Error(), "已存在") {
+	if err != nil && !IsBaotaAlreadyExists(err) {
 		log.Printf("[%s] 反代下发异常: %v", target.Domain, err)
 	}
 }

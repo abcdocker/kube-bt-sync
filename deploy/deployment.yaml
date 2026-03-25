@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-bt-sync
+  namespace: kube-bt-sync
+  labels:
+    app.kubernetes.io/name: kube-bt-sync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-bt-sync
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-bt-sync
+    spec:
+      serviceAccountName: kube-bt-sync
+      securityContext:
+        fsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: kube-bt-sync
+          image: ghcr.io/OWNER/kube-bt-sync:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # 可选：首次部署前也可通过 Web /setup 写入；此处用于无人值守或 CI
+            - name: KUBEBT_DATA_DIR
+              value: "/data"
+            # 示例：宝塔与 DDNS（建议用 Secret 引用，勿直接写密钥）
+            # - name: BAOTA_URL
+            #   value: "http://你的云主机:面板端口"
+            # - name: BAOTA_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: kube-bt-sync-secrets
+            #       key: baota-api-key
+            # - name: DDNS_HOST
+            #   value: "home.example.com"
+            # - name: DEFAULT_PORT
+            #   value: "38333"
+            # - name: SYNC_INTERVAL_SEC
+            #   value: "30"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kube-bt-sync-data
