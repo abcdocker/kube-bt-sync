@@ -2,18 +2,25 @@ package internal
 
 import (
 	"crypto/md5"
+<<<<<<< HEAD
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+=======
+	"crypto/tls" // 【新增】用于配置 TLS 证书忽略
+	"fmt"
+	"io"
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
+<<<<<<< HEAD
 func joinBaotaURL(base, apiPath string) string {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	apiPath = strings.TrimSpace(apiPath)
@@ -129,6 +136,9 @@ func ProbeBaotaTCPFromURL(baotaURL string, dialTimeout time.Duration) error {
 }
 
 func doBaotaPOST(cfg Config, timeout time.Duration, apiPath string, params map[string]string) (string, error) {
+=======
+func CallBaotaAPI(cfg Config, apiPath string, params map[string]string) (string, error) {
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	md5Key := fmt.Sprintf("%x", md5.Sum([]byte(cfg.BaotaAPIKey)))
 	requestToken := fmt.Sprintf("%x", md5.Sum([]byte(timestamp+md5Key)))
@@ -140,14 +150,39 @@ func doBaotaPOST(cfg Config, timeout time.Duration, apiPath string, params map[s
 		data.Set(k, v)
 	}
 
+<<<<<<< HEAD
 	reqURL := joinBaotaURL(cfg.BaotaURL, apiPath)
 	req, err := http.NewRequest("POST", reqURL, strings.NewReader(data.Encode()))
+=======
+	// 【优化】处理用户填写的 URL 尾部可能自带斜杠，导致拼接出双斜杠的问题
+	baseURL := strings.TrimRight(cfg.BaotaURL, "/")
+	if !strings.HasPrefix(apiPath, "/") {
+		apiPath = "/" + apiPath
+	}
+	fullURL := baseURL + apiPath
+
+	req, err := http.NewRequest("POST", fullURL, strings.NewReader(data.Encode()))
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	if err != nil {
 		return "", err
 	}
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
+<<<<<<< HEAD
 	client := newBaotaHTTPClient(cfg, timeout)
+=======
+	// 【核心修复】自定义 Transport，设置 InsecureSkipVerify 为 true，跳过自签名证书校验
+	customTransport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	// 将自定义的 Transport 挂载到 Client 上
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: customTransport,
+	}
+
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -158,6 +193,7 @@ func doBaotaPOST(cfg Config, timeout time.Duration, apiPath string, params map[s
 	if err != nil {
 		return "", err
 	}
+<<<<<<< HEAD
 	if resp.StatusCode >= http.StatusBadRequest {
 		return "", errors.New("宝塔 API 返回异常状态: " + resp.Status)
 	}
@@ -219,4 +255,7 @@ var errBaotaAlreadyExists = errors.New("baota resource already exists")
 
 func IsBaotaAlreadyExists(err error) bool {
 	return err != nil && errors.Is(err, errBaotaAlreadyExists)
+=======
+	return string(bodyBytes), nil
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 }

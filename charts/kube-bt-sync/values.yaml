@@ -1,0 +1,51 @@
+app:
+  replicaCount: 1
+  image:
+    repository: harbor.frps.cn/kube-bt-sync-main/v1.13
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 31080
+
+# 🔐 安全与环境配置
+config:
+  # 宝塔面板配置
+  baotaUrl: "http://你的公网IP:宝塔面板端口"
+  baotaApiKey: "你的宝塔API_KEY"
+  
+  # 家庭宽带 DDNS 配置
+  ddnsHost: "home.i4t.com"
+  defaultPort: "38333"
+  httpsPort: "38443"
+
+# ==========================================
+# 📦 底层依赖开关 (一键安装前置组件)
+# ==========================================
+ingress-nginx:
+  enabled: true  # 设为 true，Helm 会自动安装 Ingress 控制器
+  controller:
+    hostNetwork: true
+    kind: DaemonSet
+    # 【网络优化】替换 Controller 主程序为阿里云镜像源，解决拉取超时
+    image:
+      registry: registry.aliyuncs.com
+      image: google_containers/nginx-ingress-controller
+    # 【网络优化】替换 Webhook 证书生成器为阿里云镜像源
+    admissionWebhooks:
+      patch:
+        image:
+          registry: registry.aliyuncs.com
+          image: google_containers/kube-webhook-certgen
+
+metallb:
+  enabled: true  # 设为 true，Helm 会自动安装 MetalLB
+  # 【网络优化】MetalLB 官方使用 quay.io，国内极慢，在此替换为 DaoCloud 代理源
+  controller:
+    image:
+      registry: quay.m.daocloud.io
+  speaker:
+    image:
+      registry: quay.m.daocloud.io

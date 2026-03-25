@@ -1,14 +1,20 @@
 package internal
 
 import (
+<<<<<<< HEAD
 	"errors"
 	"os"
 	"strconv"
 	"strings"
+=======
+	"fmt"
+	"os"
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	"time"
 )
 
 type Config struct {
+<<<<<<< HEAD
 	BaotaURL           string
 	BaotaAPIKey        string
 	BaotaSkipTLSVerify bool
@@ -306,6 +312,23 @@ func validateOIDCFields(c Config) error {
 		return nil
 	}
 	return errors.New("OIDC 须同时配置 OIDC_ISSUER_URL、OIDC_CLIENT_ID、OIDC_CLIENT_SECRET、OIDC_REDIRECT_URL（或四项均留空）")
+=======
+	BaotaURL     string
+	BaotaAPIKey  string
+	DDNSHost     string
+	DefaultPort  string
+	SyncInterval time.Duration
+}
+
+func LoadConfig() Config {
+	return Config{
+		BaotaURL:     getEnv("BAOTA_URL", "http://127.0.0.1:8888"),
+		BaotaAPIKey:  getEnv("BAOTA_API_KEY", ""), // 必须配置
+		DDNSHost:     getEnv("DDNS_HOST", "home.example.com"),
+		DefaultPort:  getEnv("DEFAULT_PORT", "38333"),
+		SyncInterval: time.Duration(getEnvAsInt("SYNC_INTERVAL_SEC", 30)) * time.Second,
+	}
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 }
 
 func getEnv(key, fallback string) string {
@@ -317,6 +340,7 @@ func getEnv(key, fallback string) string {
 
 func getEnvAsInt(key string, fallback int) int {
 	if value, exists := os.LookupEnv(key); exists {
+<<<<<<< HEAD
 		intVal, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil {
 			return fallback
@@ -341,3 +365,11 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 }
+=======
+		var intVal int
+		fmt.Sscanf(value, "%d", &intVal)
+		return intVal
+	}
+	return fallback
+}
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661

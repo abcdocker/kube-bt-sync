@@ -414,6 +414,7 @@ spec:
     }
 
     async function deleteIngress(ns, name, domain) {
+<<<<<<< HEAD
         let deleteBaota = false;
         if (domain && domain.trim()) {
             deleteBaota = confirm(
@@ -422,11 +423,20 @@ spec:
         } else {
             if (!confirm(`删除 Ingress [${ns}/${name}]？\n（无 Host，仅删除集群中的资源）`)) return;
         }
+=======
+        if (!confirm(`确定要删除 K8s 集群中的 Ingress [${name}] 吗？`)) return;
+        const delBaota = confirm(`是否同时在宝塔云端面板中删除站点 [${domain}] ？\n\n(点“确定”彻底删除，点“取消”只删K8s路由)`);
+        
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
         try {
             const res = await fetch('/api/ingress/delete', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
+<<<<<<< HEAD
                 body: JSON.stringify({namespace: ns, name: name, domain: domain, deleteBaota: deleteBaota})
+=======
+                body: JSON.stringify({namespace: ns, name: name, domain: domain, deleteBaota: delBaota})
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
             });
             const result = await res.json();
             if (res.ok) { alert(result.message); fetchRules(); } else { alert('删除失败: ' + result.error); }
@@ -436,4 +446,8 @@ spec:
     window.onload = () => { refreshAll(); };
 </script>
 </body>
+<<<<<<< HEAD
 </html>
+=======
+</html>
+>>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661

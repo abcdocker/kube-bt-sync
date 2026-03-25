@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-bt-sync-sa
+  namespace: tools
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-bt-sync-role
+rules:
+# 1. 核心路由权限：允许管理 Ingress
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# 2. 探测雷达权限：允许扫描 Deployment 和 DaemonSet (兼容裸机网关)
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+# 3. 页面数据权限：允许获取 Namespace, Service 和 Node (获取真实物理IP)
+- apiGroups: [""]
+  resources: ["services", "namespaces", "nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-bt-sync-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-bt-sync-role
+subjects:
+- kind: ServiceAccount
+  name: kube-bt-sync-sa
+  namespace: tools
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-bt-sync
+  namespace: tools
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-bt-sync
+  template:
+    metadata:
+      labels:
+        app: kube-bt-sync
+    spec:
+      serviceAccountName: kube-bt-sync-sa
+      containers:
+      - name: sync-server
+        image: harbor.frps.cn/kube-bt-sync-main/v1.13
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AUTH_USER
+          value: "admin"
+        - name: AUTH_PASSWORD
+          value: "i4t123456"
+        - name: BAOTA_URL
+          value: "http://你的公网IP:宝塔面板端口"
+        - name: BAOTA_API_KEY
+          value: "你的宝塔API_KEY"
+        - name: DDNS_HOST
+          value: "home.i4t.com"
+        - name: DEFAULT_PORT
+          value: "38333"
+        - name: HTTPS_PORT
+          value: "38443"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-bt-sync-svc
+  namespace: tools
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 31080
+  selector:
+    app: kube-bt-sync
