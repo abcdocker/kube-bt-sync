@@ -1,0 +1,499 @@
+/* Login — 浅色为主 + 轻微「运维面板」层次（网格、色条、底栏），暗色同步 */
+
+.login-shell {
+  color: #475569;
+}
+
+.login-ops-theme.login-mesh {
+  background-color: #f1f5f9;
+  background-image:
+    radial-gradient(ellipse 90% 60% at 10% -10%, rgba(6, 182, 212, 0.11), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 100% 110%, rgba(99, 102, 241, 0.08), transparent 50%),
+    linear-gradient(165deg, #f8fafc 0%, #eef2f7 48%, #f1f5f9 100%);
+}
+
+.dark .login-ops-theme.login-mesh {
+  background-color: #0f172a;
+  background-image:
+    radial-gradient(ellipse 80% 55% at 15% 0%, rgba(34, 211, 238, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 45% at 100% 100%, rgba(99, 102, 241, 0.14), transparent 50%),
+    linear-gradient(165deg, #0f172a 0%, #111827 50%, #0f172a 100%);
+}
+
+/* 未加 login-ops-theme 时的旧类名仍可用（其它入口若引用） */
+.login-mesh:not(.login-ops-theme) {
+  background-color: #ffffff;
+  background-image:
+    radial-gradient(ellipse 85% 55% at 0% 0%, rgba(148, 163, 184, 0.09), transparent 52%),
+    radial-gradient(ellipse 75% 50% at 100% 100%, rgba(203, 213, 225, 0.12), transparent 50%),
+    linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+}
+
+/* 工程网格：弱对比，中心略亮 */
+.login-ops-bg-grid {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.55;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 42%, #000 0%, transparent 72%);
+}
+
+.dark .login-ops-bg-grid {
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+}
+
+.login-ops-vignette {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(ellipse 100% 65% at 50% -15%, rgba(14, 165, 233, 0.14), transparent 42%);
+}
+
+.dark .login-ops-vignette {
+  background: radial-gradient(ellipse 90% 55% at 50% -10%, rgba(34, 211, 238, 0.1), transparent 45%);
+}
+
+/* 极轻胶片颗粒，打破「死白」 */
+.login-ops-noise {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.dark .login-ops-noise {
+  opacity: 0.05;
+}
+
+.login-card {
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 18px 48px -20px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+}
+
+.dark .login-card {
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 20px 50px -18px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(148, 163, 184, 0.08) inset;
+}
+
+.login-card-ops::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #22d3ee, #3b82f6 45%, #6366f1);
+  opacity: 0.92;
+}
+
+/* OIDC 入口：与 login-card-ops 一致的浅色卡片式链接（非渐变铺满） */
+.login-oidc-ops-card .login-oidc-ops-link:hover {
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.dark .login-oidc-ops-card .login-oidc-ops-link:hover {
+  background: rgba(30, 41, 59, 0.55);
+}
+
+.login-card-top-accent {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.5), rgba(99, 102, 241, 0.45), transparent);
+  opacity: 0.85;
+}
+
+/* 底栏：状态行 */
+.login-ops-dock {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 1rem 0.5rem;
+  border-top: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(248, 250, 252, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.dark .login-ops-dock {
+  border-top-color: rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 23, 0.82);
+}
+
+.login-ops-dock-seg {
+  flex-shrink: 0;
+}
+
+.login-ops-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.45rem;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  vertical-align: middle;
+  animation: login-ops-pulse 2.2s ease-out infinite;
+}
+
+@keyframes login-ops-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+/* Boot / redirect panels */
+.login-boot-panel {
+  animation: login-boot-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes login-boot-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Post-login success overlay */
+.login-success-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.97);
+  animation: login-success-fade-in 0.35s ease-out forwards;
+}
+
+.dark .login-success-overlay {
+  background: rgba(15, 23, 42, 0.96);
+}
+
+@keyframes login-success-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.login-success-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0 1.5rem;
+}
+
+.login-success-logo {
+  margin-bottom: 1rem;
+}
+
+.login-success-logo img {
+  height: 2.5rem;
+  width: auto;
+  max-width: min(260px, 85vw);
+  object-fit: contain;
+}
+
+.login-success-check-wrap {
+  margin-bottom: 0.75rem;
+}
+
+.login-success-check-svg {
+  width: 48px;
+  height: 48px;
+}
+
+.login-success-check-circle {
+  fill: none;
+  stroke: #cbd5e1;
+  stroke-width: 2;
+  stroke-dasharray: 151;
+  stroke-dashoffset: 151;
+  transform-origin: 26px 26px;
+  transform: rotate(-90deg);
+  animation: login-success-ring 0.45s ease-out 0.1s forwards;
+}
+
+.dark .login-success-check-circle {
+  stroke: #475569;
+}
+
+@keyframes login-success-ring {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.login-success-check-mark {
+  fill: none;
+  stroke: #0f172a;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: login-success-tick 0.35s ease-out 0.5s forwards;
+}
+
+.dark .login-success-check-mark {
+  stroke: #e2e8f0;
+}
+
+@keyframes login-success-tick {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.login-success-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.dark .login-success-title {
+  color: #f1f5f9;
+}
+
+.login-success-sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.dark .login-success-sub {
+  color: #94a3b8;
+}
+
+.login-success-bar {
+  margin-top: 1.25rem;
+  height: 2px;
+  width: min(160px, 50vw);
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #22d3ee, #6366f1, transparent);
+  opacity: 0.6;
+}
+
+/* ── Login v2（白底双栏）：轻网格、浮动角标、卡片光晕 ── */
+
+.login-page-v2 {
+  --login-v2-primary: #1a5ec8;
+  --login-v2-k8s: #326de6;
+  --login-v2-docker: #0db7ed;
+  --login-v2-go: #00acd7;
+  --login-v2-prom: #e6522c;
+  --login-v2-vc: #6ab04c;
+}
+
+.login-page-v2-grid-bg {
+  background-image:
+    linear-gradient(rgba(26, 94, 200, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26, 94, 200, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+@keyframes login-v2-grid-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.login-page-v2-grid-bg--pulse {
+  animation: login-v2-grid-pulse 4s ease-in-out infinite;
+}
+
+@keyframes login-v2-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+.login-page-v2-scan-line {
+  animation: login-v2-scan 6s linear infinite;
+}
+
+@keyframes login-v2-float-0 {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(2deg);
+  }
+}
+
+@keyframes login-v2-float-1 {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(-2deg);
+  }
+}
+
+@keyframes login-v2-float-2 {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(1.5deg);
+  }
+}
+
+@keyframes login-v2-float-3 {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(-2.5deg);
+  }
+}
+
+.login-float-0 {
+  animation: login-v2-float-0 5s ease-in-out infinite;
+}
+.login-float-1 {
+  animation: login-v2-float-1 6.5s ease-in-out infinite;
+}
+.login-float-2 {
+  animation: login-v2-float-2 4.8s ease-in-out infinite;
+}
+.login-float-3 {
+  animation: login-v2-float-3 7s ease-in-out infinite;
+}
+
+.login-shadow-glow-k8s {
+  box-shadow: 0 4px 20px rgba(50, 109, 230, 0.14), 0 1px 6px rgba(50, 109, 230, 0.06);
+}
+.login-shadow-glow-docker {
+  box-shadow: 0 4px 20px rgba(13, 183, 237, 0.14), 0 1px 6px rgba(13, 183, 237, 0.06);
+}
+.login-shadow-glow-go {
+  box-shadow: 0 4px 20px rgba(0, 172, 215, 0.14), 0 1px 6px rgba(0, 172, 215, 0.06);
+}
+.login-shadow-glow-prom {
+  box-shadow: 0 4px 20px rgba(230, 82, 44, 0.14), 0 1px 6px rgba(230, 82, 44, 0.06);
+}
+.login-shadow-glow-vcenter {
+  box-shadow: 0 4px 20px rgba(106, 176, 76, 0.16), 0 1px 6px rgba(106, 176, 76, 0.08);
+}
+
+.login-card-glow-v2 {
+  box-shadow: 0 8px 48px rgba(26, 94, 200, 0.08), 0 2px 12px rgba(15, 23, 42, 0.04);
+}
+
+@keyframes login-v2-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-v2-fade-in-up {
+  animation: login-v2-fade-in-up 0.55s ease both;
+}
+
+.login-v2-fade-in-up.login-v2-d100 {
+  animation-delay: 0.08s;
+}
+.login-v2-fade-in-up.login-v2-d200 {
+  animation-delay: 0.16s;
+}
+.login-v2-fade-in-up.login-v2-d300 {
+  animation-delay: 0.24s;
+}
+.login-v2-fade-in-up.login-v2-d400 {
+  animation-delay: 0.32s;
+}
+
+.login-v2-input:focus {
+  box-shadow: 0 0 0 2px rgba(26, 94, 200, 0.15), 0 0 12px rgba(26, 94, 200, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page-v2-grid-bg--pulse,
+  .login-page-v2-scan-line,
+  .login-float-0,
+  .login-float-1,
+  .login-float-2,
+  .login-float-3,
+  .login-v2-fade-in-up {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  .login-boot-panel,
+  .login-success-overlay,
+  .login-success-check-circle,
+  .login-success-check-mark,
+  .login-ops-pulse-dot {
+    animation: none !important;
+  }
+
+  .login-success-check-circle {
+    stroke-dashoffset: 0;
+  }
+
+  .login-success-check-mark {
+    stroke-dashoffset: 0;
+  }
+
+  .login-ops-pulse-dot {
+    box-shadow: none;
+  }
+}

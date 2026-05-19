@@ -1,12 +1,13 @@
 import React from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, ChevronDown, Loader2, Pencil, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import {
   AlertDialog,
@@ -33,7 +34,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { apiGetJson, apiPostJson, apiPutJson } from "@/lib/api";
+import { apiGetJson, apiPostJson, apiPutJson, type ApiHttpError } from "@/lib/api";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { mergeListeningPortsByProtoPort } from "@/lib/listening-ports";
 import VCenterConsolePanel from "./VCenterConsolePanel";
 import VCenterSshTerminal from "./VCenterSshTerminal";
 import { VCenterStorageChart, formatBytes } from "./VCenterResourceCharts";
@@ -62,11 +69,14 @@ const VCenterVMDetail: React.FC = () => {
 
   const detailQ = useQuery({
     queryKey: ["vcenter-vm", decoded],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiGetJson<VCenterVMDetailResponse>(
-        `/api/vcenter/vms/${encodeURIComponent(decoded)}`
-      ),
+        `/api/vcenter/vms/${encodeURIComponent(decoded)}?refresh=1`
+      , { signal }),
     enabled: decoded.length > 0,
+    staleTime: 0,
+    refetchInterval: 16_000,
+    refetchOnWindowFocus: true,
   });
 
   const [cpuEdit, setCpuEdit] = React.useState("");
@@ -92,13 +102,37 @@ const VCenterVMDetail: React.FC = () => {
   /** 关机二次确认：1 第一步，2 第二步 */
   const [powerOffStep, setPowerOffStep] = React.useState<0 | 1 | 2>(0);
   const powerDoneRef = React.useRef(false);
+  const [listeningPortsRequested, setListeningPortsRequested] = React.useState(false);
+  const [listeningPortsOpen, setListeningPortsOpen] = React.useState(false);
+
+  type ListeningPortsResponse = {
+    guestIp?: string;
+    ports?: { proto: string; local: string; port: number }[];
+    scannedAt?: string;
+    stderr?: string;
+    scanFromPodHint?: string;
+  };
+
+  const listeningPortsQ = useQuery({
+    queryKey: ["vcenter-vm-listening-ports", decoded],
+    queryFn: ({ signal }) =>
+      apiGetJson<ListeningPortsResponse>(
+        `/api/vcenter/vms/${encodeURIComponent(decoded)}/listening-ports`
+      , { signal }),
+    enabled: listeningPortsRequested && decoded.length > 0,
+  });
+
+  const mergedListeningPorts = React.useMemo(
+    () => mergeListeningPortsByProtoPort(listeningPortsQ.data?.ports ?? []),
+    [listeningPortsQ.data?.ports]
+  );
 
   const taskStatusQ = useQuery({
     queryKey: ["vcenter-task", powerTaskId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiGetJson<VCenterTaskStatusResponse>(
         `/api/vcenter/tasks/${encodeURIComponent(powerTaskId)}`
-      ),
+      , { signal }),
     enabled: powerTaskId.length > 0,
     refetchInterval: (q) => {
       const s = q.state.data?.state;
@@ -290,6 +324,9 @@ const VCenterVMDetail: React.FC = () => {
                             {taskProg > 0 ? ` ${taskProg}%` : ""}
                           </span>
                         )}
+                      </p>
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        电源与摘要约每 16 秒向 vCenter 拉取刷新，重启/关机后状态会自动更新。
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -546,6 +583,108 @@ const VCenterVMDetail: React.FC = () => {
                 </Dialog>
               </>
             )}
+
+            <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">来宾已监听端口</p>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    由 Dashboard Pod SSH 到 Guest 执行 ss/netstat；需已配置 SSH 与 Guest IP。
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="gap-1.5 shrink-0"
+                  disabled={!decoded}
+                  onClick={() => {
+                    if (listeningPortsRequested) {
+                      void listeningPortsQ.refetch();
+                    } else {
+                      setListeningPortsRequested(true);
+                    }
+                  }}
+                >
+                  {listeningPortsQ.isFetching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Radio className="h-3.5 w-3.5" />
+                  )}
+                  {listeningPortsRequested ? "重新加载" : "加载端口列表"}
+                </Button>
+              </div>
+              {listeningPortsQ.isError && (
+                <p className="mt-3 text-sm text-red-600">
+                  {(listeningPortsQ.error as Error).message}
+                </p>
+              )}
+              {listeningPortsQ.data && (
+                <Collapsible
+                  open={listeningPortsOpen}
+                  onOpenChange={setListeningPortsOpen}
+                  className="mt-3"
+                >
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2 text-left text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100"
+                    >
+                      <span>
+                        {listeningPortsOpen ? "收起" : "展开"}端口列表
+                        {mergedListeningPorts.length > 0
+                          ? `（${mergedListeningPorts.length} 条，已按端口合并）`
+                          : ""}
+                      </span>
+                      <ChevronDown
+                        className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${
+                          listeningPortsOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="data-[state=closed]:animate-none">
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-gray-500">
+                        扫描时间 {listeningPortsQ.data.scannedAt ?? "—"} · Guest{" "}
+                        <span className="font-mono">{listeningPortsQ.data.guestIp ?? "—"}</span>
+                      </p>
+                      {listeningPortsQ.data.stderr ? (
+                        <p className="text-xs text-amber-800">{listeningPortsQ.data.stderr}</p>
+                      ) : null}
+                      <div className="overflow-x-auto rounded-lg border border-gray-100">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-xs">协议</TableHead>
+                              <TableHead className="text-xs">端口</TableHead>
+                              <TableHead className="text-xs">本地地址</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {mergedListeningPorts.map((p) => (
+                              <TableRow key={`${p.proto}-${p.port}`}>
+                                <TableCell className="font-mono text-xs">{p.proto}</TableCell>
+                                <TableCell className="tabular-nums text-xs">{p.port}</TableCell>
+                                <TableCell className="max-w-[260px] break-words font-mono text-xs">
+                                  {p.locals}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {(listeningPortsQ.data.ports ?? []).length === 0 &&
+                        !listeningPortsQ.isFetching && (
+                          <p className="text-xs text-gray-500">
+                            未解析到监听项（或输出格式不兼容）。
+                          </p>
+                        )}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </div>
 
             {guest && (
               <div className="rounded-xl border border-gray-200 bg-white p-4">

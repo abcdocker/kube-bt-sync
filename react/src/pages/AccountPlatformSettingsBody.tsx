@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { RuntimeSettingsDTO } from "@/lib/api";
+import OidcAuthentikHelp from "@/components/OidcAuthentikHelp";
 
 type Props = {
   form: RuntimeSettingsDTO;
@@ -28,6 +29,93 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
     <div className="space-y-6">
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
+          <h2 className="text-base font-bold text-gray-900">外观与名称</h2>
+          <p className="mt-1 text-xs text-gray-500">
+            浏览器标题、顶栏 Logo；支持 https 绝对地址或站内路径（需可公网访问或同源）
+          </p>
+        </div>
+        <div className="space-y-4 p-6">
+          <div className="space-y-2">
+            <Label>平台显示名称</Label>
+            <Input
+              placeholder="例如：运维控制台"
+              value={String(form.platformDisplayName ?? "")}
+              onChange={(e) => setField("platformDisplayName", e.target.value)}
+            />
+            <p className="text-[11px] text-gray-500">
+              保存后将替换侧栏与顶栏默认的「Kube-BT-Sync」；名称启用时带有轻微呼吸动效（白底界面）。
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Logo 图片 URL</Label>
+            <Input
+              placeholder="https://…/logo.png 或 /static/logo.png"
+              value={String(form.platformLogoUrl ?? "")}
+              onChange={(e) => setField("platformLogoUrl", e.target.value)}
+            />
+            <p className="text-[11px] text-gray-500">
+              推荐：<strong className="font-medium text-gray-700">约 40×40～48×48 px</strong>（或同比例矢量），
+              侧栏/顶栏以约 32–36px 高度展示；文件宜 <strong className="font-medium text-gray-700">小于约 100KB</strong>（优先 SVG 或压缩
+              PNG），避免首屏闪烁。
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>站点图标（favicon）URL</Label>
+            <Input
+              placeholder="https://…/favicon.ico"
+              value={String(form.platformFaviconUrl ?? "")}
+              onChange={(e) => setField("platformFaviconUrl", e.target.value)}
+            />
+          </div>
+          <div className="space-y-2 border-t border-gray-100 pt-4">
+            <Label>静态资源 CDN 根（assetsCdnBaseUrl）</Label>
+            <Input
+              className="font-mono text-xs"
+              placeholder="https://your-cdn.example.com/cmdb（无尾斜杠；留空则走默认公网 CDN）"
+              value={String(form.assetsCdnBaseUrl ?? "")}
+              onChange={(e) => setField("assetsCdnBaseUrl", e.target.value)}
+            />
+            <p className="text-[11px] leading-relaxed text-gray-500">
+              用于已发布文档分享页、未构建 React 时的边缘网关模板、堡垒机 WMKS 所需的 jQuery 等。请将仓库{" "}
+              <code className="rounded bg-gray-100 px-0.5">scripts/export-cmdb-cdn-assets.sh</code> 生成的{" "}
+              <code className="rounded bg-gray-100 px-0.5">cmdb/</code> 目录整包上传到该域名下，使{" "}
+              <code className="rounded bg-gray-100 px-0.5">assetsCdnBaseUrl/doc-public/...</code> 可访问。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
+          <h2 className="text-base font-bold text-gray-900">SSH 终端（Web）</h2>
+          <p className="mt-1 text-xs text-gray-500">
+            平台内嵌 xterm（K8s Pod、vCenter、云主机、Redis CLI 等）使用的字体；保存后刷新页面生效。
+          </p>
+        </div>
+        <div className="space-y-4 p-6">
+          <div className="space-y-2">
+            <Label>字体族（font-family）</Label>
+            <Input
+              placeholder="留空则使用默认，例如：JetBrains Mono, monospace"
+              value={String(form.sshTerminalFontFamily ?? "")}
+              onChange={(e) => setField("sshTerminalFontFamily", e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>字号（px，1–48；0 表示未设置）</Label>
+            <Input
+              type="number"
+              min={0}
+              max={48}
+              value={Number(form.sshTerminalFontSize ?? 0)}
+              onChange={(e) => setField("sshTerminalFontSize", Number(e.target.value))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
           <h2 className="text-base font-bold text-gray-900">平台 URL</h2>
           <p className="mt-1 text-xs text-gray-500">对外访问基址（与业务路由、回调 URL 相关）</p>
         </div>
@@ -45,7 +133,9 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
           <h2 className="text-base font-bold text-gray-900">MySQL</h2>
-          <p className="mt-1 text-xs text-gray-500">平台元数据存储；分字段填写后保存</p>
+          <p className="mt-1 text-xs text-gray-500">
+            平台元数据<strong>持久化</strong>存储（账号、审计、部分业务表）；数据在 MySQL 落盘，请自行做好库备份与高可用。分字段填写后保存。
+          </p>
         </div>
         <div className="space-y-6 p-6 text-sm">
           {String(form.mysqlHost ?? "").trim() === "" &&
@@ -96,6 +186,8 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               <Label>密码（留空或 *** 保留原值）</Label>
               <Input
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 value={String(form.mysqlPassword ?? "")}
                 onChange={(e) => setField("mysqlPassword", e.target.value)}
               />
@@ -107,7 +199,9 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
           <h2 className="text-base font-bold text-gray-900">Redis</h2>
-          <p className="mt-1 text-xs text-gray-500">KV / 缓存；IP 与端口优先于旧版 redisAddr</p>
+          <p className="mt-1 text-xs text-gray-500">
+            KV / 热缓存（会话、Prometheus 趋势、vCenter 列表等）；默认内存易失，生产请配持久化（AOF/RDB）或接受缓存可丢。IP 与端口优先于旧版 redisAddr。
+          </p>
         </div>
         <div className="space-y-6 p-6 text-sm">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -144,8 +238,80 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               <Label>密码（留空保留原值）</Label>
               <Input
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 value={String(form.redisPassword ?? "")}
                 onChange={(e) => setField("redisPassword", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>逻辑库 DB（redisDb）</Label>
+              <Input
+                type="number"
+                min={0}
+                max={255}
+                value={Number(form.redisDb ?? 0)}
+                onChange={(e) => setField("redisDb", Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>键前缀（redisKeyPrefix）</Label>
+              <Input
+                className="font-mono text-xs"
+                placeholder="kubebt"
+                value={String(form.redisKeyPrefix ?? "")}
+                onChange={(e) => setField("redisKeyPrefix", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>vCenter 虚拟机列表缓存 TTL 秒（vcenterCacheTtlSec）</Label>
+              <Input
+                type="number"
+                min={30}
+                max={86400}
+                value={Number(form.vcenterCacheTtlSec ?? 120)}
+                onChange={(e) => setField("vcenterCacheTtlSec", Number(e.target.value))}
+              />
+              <p className="text-[11px] text-gray-500">写入 Redis 的 VM 列表快照过期时间；过短会增加 vCenter 压力，过长列表更新滞后。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
+          <h2 className="text-base font-bold text-gray-900">应用中心 Redis（K8s 默认）</h2>
+          <p className="mt-1 text-xs text-gray-500">
+            Redis 与 redis_exporter 的<strong>完整镜像地址</strong>、私有仓库拉取 Secret 等已迁至「应用中心 → Redis 缓存 → 模版中心」按模版配置。此处仅保留部署向导的持久化默认值（仍可用环境变量覆盖）。
+          </p>
+        </div>
+        <div className="space-y-4 p-6 text-sm">
+          <div className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+            <div>
+              <span className="text-gray-800">redisK8sPersistence</span>
+              <p className="text-xs text-gray-500">K8s 部署是否默认使用 PVC 持久化</p>
+            </div>
+            <Switch
+              checked={form.redisK8sPersistence !== false}
+              onCheckedChange={(x) => setField("redisK8sPersistence", x)}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>redisK8sStorageSize</Label>
+              <Input
+                className="font-mono text-xs"
+                placeholder="10Gi"
+                value={String(form.redisK8sStorageSize ?? "")}
+                onChange={(e) => setField("redisK8sStorageSize", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>redisK8sStorageClass（空则部署时自动选默认 SC）</Label>
+              <Input
+                className="font-mono text-xs"
+                value={String(form.redisK8sStorageClass ?? "")}
+                onChange={(e) => setField("redisK8sStorageClass", e.target.value)}
               />
             </div>
           </div>
@@ -164,39 +330,6 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               value={String(form.encryptionKey ?? "")}
               onChange={(e) => setField("encryptionKey", e.target.value)}
             />
-          </div>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-100 bg-gray-50/80 px-6 py-4">
-          <h2 className="text-base font-bold text-gray-900">Ingress 与宝塔</h2>
-          <p className="mt-1 text-xs text-gray-500">同步开关与面板 API</p>
-        </div>
-        <div className="space-y-6 p-6 text-sm">
-          <div className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
-            <span className="text-gray-700">Ingress ↔ 宝塔同步</span>
-            <Switch
-              checked={Boolean(form.ingressBaotaSyncEnabled)}
-              onCheckedChange={(v) => setField("ingressBaotaSyncEnabled", v)}
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2 sm:col-span-2">
-              <Label>baotaUrl</Label>
-              <Input
-                value={String(form.baotaUrl ?? "")}
-                onChange={(e) => setField("baotaUrl", e.target.value)}
-              />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>baotaApiKey（留空保留）</Label>
-              <Input
-                type="password"
-                value={String(form.baotaApiKey ?? "")}
-                onChange={(e) => setField("baotaApiKey", e.target.value)}
-              />
-            </div>
           </div>
         </div>
       </div>
@@ -229,6 +362,8 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               <Label>dashboardPassword（留空或 *** 保留）</Label>
               <Input
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 value={String(form.dashboardPassword ?? "")}
                 onChange={(e) => setField("dashboardPassword", e.target.value)}
               />
@@ -237,6 +372,8 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               <Label>dashboardSessionSecret（留空或 *** 保留）</Label>
               <Input
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 value={String(form.dashboardSessionSecret ?? "")}
                 onChange={(e) => setField("dashboardSessionSecret", e.target.value)}
               />
@@ -266,6 +403,7 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
           <p className="mt-1 text-xs text-gray-500">四项须同时填写或全部留空；留空则沿用环境变量</p>
         </div>
         <div className="space-y-4 p-6 text-sm">
+          <OidcAuthentikHelp />
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <Label>oidcIssuerUrl</Label>
@@ -286,6 +424,8 @@ const AccountPlatformSettingsBody: React.FC<Props> = ({
               <Label>oidcClientSecret（留空或 *** 保留）</Label>
               <Input
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 value={String(form.oidcClientSecret ?? "")}
                 onChange={(e) => setField("oidcClientSecret", e.target.value)}
               />

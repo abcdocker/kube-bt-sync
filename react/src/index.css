@@ -166,6 +166,20 @@
   .app-main-scroll::-webkit-scrollbar-thumb:hover {
     background: #9ca3af;
   }
+
+  /**
+   * 堡垒机：可纵向滚动但不显示滚动条（侧栏 / 概览等）
+   */
+  .bastion-asset-sidebar-scroll {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .bastion-asset-sidebar-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
 }
 
 /* vCenter SSH：限制 xterm 外层高度，由 .xterm-viewport 内部滚动，避免整页被 scroll-area 撑开 */
@@ -182,4 +196,25 @@
   height: 100% !important;
   max-height: 100% !important;
   overflow-y: auto !important;
+  /* 堡垒机 SSH：隐藏终端区域纵向滚动条，保留滚轮滚动 */
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.vc-ssh-xterm-host .xterm .xterm-viewport::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* 平台显示名称：浅色背景下极轻 opacity 呼吸，不抢视觉 */
+@keyframes platform-display-name-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+.platform-display-name-breathe {
+  animation: platform-display-name-breathe 3.5s ease-in-out infinite;
 }

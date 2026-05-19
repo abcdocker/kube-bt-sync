@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
+import { APP_CONFIG_QUERY_KEY } from "@/hooks/use-app-config";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
 import { apiGetJson, apiPutJson, type RuntimeSettingsDTO } from "@/lib/api";
 
 /**
@@ -54,13 +56,17 @@ const VCenterConnectWizard: React.FC = () => {
     const u = vcUrl.trim();
     const user = vcUser.trim();
     if (!u || !user) {
-      setErr("请填写 vCenter 地址与用户名");
+      const m = "请填写 vCenter 地址与用户名";
+      setErr(m);
+      toast.error(m);
       return;
     }
     const hadMasked =
       String((form as { vcenterPassword?: string }).vcenterPassword ?? "") === "***";
     if (!vcPassword.trim() && !hadMasked) {
-      setErr("请填写 vCenter 密码");
+      const m = "请填写 vCenter 密码";
+      setErr(m);
+      toast.error(m);
       return;
     }
     setSaving(true);
@@ -87,11 +93,15 @@ const VCenterConnectWizard: React.FC = () => {
       }
       await apiPutJson("/api/settings/runtime", payload);
       setOk("已保存并重载。");
-      await qc.invalidateQueries({ queryKey: ["app-config"] });
+      toast.success("保存成功");
+      await qc.invalidateQueries({ queryKey: APP_CONFIG_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: ["runtime-status"] });
       await qc.invalidateQueries({ queryKey: ["vcenter-status"] });
       await qc.invalidateQueries({ queryKey: ["vcenter-vms"] });
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(`保存失败：${msg}`);
     } finally {
       setSaving(false);
     }
@@ -147,7 +157,7 @@ const VCenterConnectWizard: React.FC = () => {
             type="password"
             value={vcPassword}
             onChange={(e) => setVcPassword(e.target.value)}
-            autoComplete="new-password"
+            autoComplete="off"
           />
         </div>
         <div className="flex items-center justify-between rounded-lg border border-amber-100 bg-white/80 px-3 py-2 sm:col-span-2">

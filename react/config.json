@@ -2,14 +2,14 @@
   "routes": [
     {
       "path": "/",
-      "src": "src/pages/Dashboard.tsx"
+      "src": "src/pages/HomeHub.tsx"
     },
     {
-      "path": "/ingress",
+      "path": "/cluster/baota/ingress",
       "src": "src/pages/IngressList.tsx"
     },
     {
-      "path": "/baota",
+      "path": "/cluster/baota/sync",
       "src": "src/pages/BaotaSync.tsx"
     },
     {

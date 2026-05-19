@@ -1,16 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGetJson, type SystemCheck } from "@/lib/api";
 
-/** 与后端 BAOTA_CHECK_MIN_INTERVAL_SEC 配合，减少对宝塔 TCP 探活的重复拨号 */
-const STALE_MS = 90_000;
-const REFETCH_MS = 120_000;
+/** 与 useRuntimeStatusQuery 共用 ["runtime-status"] 缓存，避免单独打 /api/system/check */
+const STALE_MS = 5 * 60_000;
 
 export function useSystemCheckQuery() {
   return useQuery({
-    queryKey: ["system-check"],
-    queryFn: () => apiGetJson<SystemCheck>("/api/system/check"),
+    queryKey: ["runtime-status"],
+    queryFn: ({ signal }) => apiGetJson<{ systemCheck: SystemCheck }>("/api/runtime/status", { signal }),
     staleTime: STALE_MS,
-    refetchInterval: REFETCH_MS,
+    gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    select: (d) => d.systemCheck,
   });
 }

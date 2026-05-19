@@ -145,13 +145,13 @@ function HostCard({ h }: { h: VCenterHostRow }) {
 const VCenterHosts: React.FC = () => {
   const statusQ = useQuery({
     queryKey: ["vcenter-status"],
-    queryFn: () =>
-      apiGetJson<{ configured: boolean; vcenterUrlHint?: string }>("/api/vcenter/status"),
+    queryFn: ({ signal }) =>
+      apiGetJson<{ configured: boolean; vcenterUrlHint?: string }>("/api/vcenter/status", { signal }),
   });
 
   const hostsQ = useQuery({
     queryKey: ["vcenter-hosts"],
-    queryFn: () => apiGetJson<VCenterHostsResponse>("/api/vcenter/hosts"),
+    queryFn: ({ signal }) => apiGetJson<VCenterHostsResponse>("/api/vcenter/hosts", { signal }),
     enabled: statusQ.data?.configured === true,
   });
 

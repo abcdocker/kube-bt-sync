@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { useAppConfig } from "@/hooks/use-app-config";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,25 +12,22 @@ import { apiGetJson, type AppConfig } from "@/lib/api";
 import type { VCenterConsoleHtmlResponse, VCenterWebmksResponse } from "./types";
 
 const VCenterConsolePanel: React.FC<{ moref: string }> = ({ moref }) => {
-  const cfgQ = useQuery({
-    queryKey: ["app-config"],
-    queryFn: () => apiGetJson<AppConfig>("/api/config"),
-  });
+  const cfgQ = useAppConfig();
 
   const consoleHtmlQ = useQuery({
     queryKey: ["vcenter-console-html", moref],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiGetJson<VCenterConsoleHtmlResponse>(
         `/api/vcenter/vms/${encodeURIComponent(moref)}/console-html`
-      ),
+      , { signal }),
   });
 
   const webmksQ = useQuery({
     queryKey: ["vcenter-webmks", moref],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiGetJson<VCenterWebmksResponse>(
         `/api/vcenter/vms/${encodeURIComponent(moref)}/webmks`
-      ),
+      , { signal }),
   });
 
   const proxyWsUrl = useMemo(() => {

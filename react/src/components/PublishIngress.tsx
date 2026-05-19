@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState } from "react";
+import { useAppConfig } from "@/hooks/use-app-config";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -11,73 +12,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { YamlEditor } from "@/components/YamlEditor";
 import { apiGetJson, apiPostJson, type AppConfig } from "@/lib/api";
-
-type ServiceRow = { namespace: string; name: string; ports: number[] };
-
-const defaultYaml = `apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app-ingress
-  namespace: default
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-    i4t.com/baota-sync: "true"
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: app.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: my-app-svc
-            port:
-              number: 80
-`;
-
-function buildIngressYaml(opts: {
-  name: string;
-  namespace: string;
-  domain: string;
-  serviceName: string;
-  port: number;
-  syncAnnotation: "i4t" | "kube-bt";
-  customDdnsPort: string;
-}): string {
-  const syncKey =
-    opts.syncAnnotation === "i4t"
-      ? "i4t.com/baota-sync"
-      : "kube-bt-sync.io/baota-sync";
-  const ddns =
-    opts.customDdnsPort.trim() !== ""
-      ? `    i4t.com/ddns-port: "${opts.customDdnsPort.trim()}"\n`
-      : "";
-  return `apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ${opts.name}
-  namespace: ${opts.namespace}
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-    ${syncKey}: "true"
-${ddns}spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${opts.domain}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: ${opts.serviceName}
-            port:
-              number: ${opts.port}
-`;
-}
+import { defaultK8sIngressYamlExample } from "@/lib/buildK8sIngressYaml";
+import IngressGraphicalForm from "@/components/IngressGraphicalForm";
 
 interface PublishIngressProps {
   onApplied: () => void;
@@ -85,53 +23,15 @@ interface PublishIngressProps {
 
 const PublishIngress: React.FC<PublishIngressProps> = ({ onApplied }) => {
   const queryClient = useQueryClient();
-  const nsQ = useQuery({
-    queryKey: ["namespaces"],
-    queryFn: () => apiGetJson<string[]>("/api/namespaces"),
-  });
-  const svcQ = useQuery({
-    queryKey: ["services"],
-    queryFn: () => apiGetJson<ServiceRow[]>("/api/services"),
-  });
-  const cfgQ = useQuery({
-    queryKey: ["app-config"],
-    queryFn: () => apiGetJson<AppConfig>("/api/config"),
-  });
+  const cfgQ = useAppConfig();
 
-  const [namespace, setNamespace] = useState("default");
-  const [ingressName, setIngressName] = useState("");
-  const [serviceName, setServiceName] = useState("");
-  const [port, setPort] = useState<number>(80);
-  const [domain, setDomain] = useState("");
-  const [customDdnsPort, setCustomDdnsPort] = useState("");
-  const [syncAnnotation, setSyncAnnotation] = useState<"i4t" | "kube-bt">("i4t");
-  const [yamlText, setYamlText] = useState(defaultYaml);
+  const [yamlText, setYamlText] = useState(() => defaultK8sIngressYamlExample("default"));
 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingYaml, setPendingYaml] = useState("");
   const [pendingSummary, setPendingSummary] = useState("");
-
-  const servicesInNs = useMemo(() => {
-    const all = svcQ.data ?? [];
-    return all.filter((s) => s.namespace === namespace);
-  }, [svcQ.data, namespace]);
-
-  useEffect(() => {
-    if (!serviceName && servicesInNs.length > 0) {
-      setServiceName(servicesInNs[0].name);
-      const p = servicesInNs[0].ports[0];
-      if (p) setPort(p);
-    }
-  }, [namespace, servicesInNs, serviceName]);
-
-  useEffect(() => {
-    const svc = servicesInNs.find((s) => s.name === serviceName);
-    if (svc?.ports?.length) {
-      setPort(svc.ports[0]);
-    }
-  }, [serviceName, servicesInNs]);
 
   const applyYaml = async (content: string) => {
     setSubmitting(true);
@@ -150,37 +50,16 @@ const PublishIngress: React.FC<PublishIngressProps> = ({ onApplied }) => {
     }
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!domain.trim() || !serviceName) {
-      setMessage("请填写域名并选择 Service");
-      return;
-    }
-    const name =
-      ingressName.trim() ||
-      `${serviceName.replace(/[^a-zA-Z0-9-]/g, "-")}-ingress`.slice(0, 63);
-    const yaml = buildIngressYaml({
-      name,
-      namespace,
-      domain: domain.trim(),
-      serviceName,
-      port,
-      syncAnnotation,
-      customDdnsPort,
-    });
-    setPendingYaml(yaml);
-    setPendingSummary(
-      `命名空间 ${namespace} · Ingress ${name} · 域名 ${domain.trim()} · Service ${serviceName}:${port}`
-    );
-    setConfirmOpen(true);
-  };
-
   const runConfirmedApply = () => {
     setConfirmOpen(false);
     void applyYaml(pendingYaml);
   };
 
   const defaultPortHint = cfgQ.data?.defaultPort ?? "38333";
+  const httpsPortHint = String(cfgQ.data?.ingressNginxHostHttpsPort ?? cfgQ.data?.httpsPort ?? "443");
+  const originScheme = cfgQ.data?.baotaUpstreamScheme === "https" ? "HTTPS" : "HTTP";
+  const originHost = cfgQ.data?.baotaUpstreamHost?.trim() || cfgQ.data?.ddnsHost?.trim() || "未设置";
+  const originPort = cfgQ.data?.baotaUpstreamPort?.trim() || (originScheme === "HTTPS" ? httpsPortHint : defaultPortHint);
 
   return (
     <div className="w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -188,14 +67,13 @@ const PublishIngress: React.FC<PublishIngressProps> = ({ onApplied }) => {
         <div>
           <h2 className="text-lg font-bold text-gray-900">暴露新服务到公网</h2>
           <p className="text-sm text-gray-500">
-            与 README 一致：为 Ingress 打上{" "}
-            <code className="rounded bg-gray-100 px-1 text-xs">i4t.com/baota-sync: &quot;true&quot;</code>{" "}
-            等注解后，控制器会同步宝塔反代。可选{" "}
-            <code className="rounded bg-gray-100 px-1 text-xs">i4t.com/ddns-port</code> 覆盖默认端口{" "}
-            <span className="font-mono text-xs">{defaultPortHint}</span>。
-            若需在宝塔启用 HTTPS，请在 YAML 模式中自行添加{" "}
-            <code className="rounded bg-gray-100 px-1 text-xs">baota-https</code> /{" "}
-            <code className="rounded bg-gray-100 px-1 text-xs">baota-ssl-cert-name</code> 等注解（见 README）。
+            表单向导中可勾选<strong>同步到宝塔</strong>；开启后与 README 一致，为 Ingress 打上{" "}
+            <code className="rounded bg-gray-100 px-1 text-xs">baota-sync</code> 等注解后由同步任务下发宝塔反代。
+            关闭则仅创建普通 Ingress。表单模式也可直接开启宝塔 HTTPS；证书来源支持使用全局默认或按 Ingress 指定宝塔证书名。平台级 PEM/KEY 仅能在宝塔设置中保存，不会写入 Ingress 注解或 YAML。当前宝塔默认回源目标来自宝塔设置：{" "}
+            <span className="font-mono text-xs">{originScheme}://{originHost}:{originPort}</span>
+            。若在表单里勾选<strong>开启宝塔 HTTPS</strong>，则会默认切到本地 Ingress HTTPS 回源；若宝塔设置中填写了固定回源端口，则仍优先使用该端口。YAML 模式仍兼容旧的{" "}
+            <code className="rounded bg-gray-100 px-1 text-xs">ddns-scheme</code> /{" "}
+            <code className="rounded bg-gray-100 px-1 text-xs">ddns-port</code> 注解覆盖。
           </p>
         </div>
       </div>
@@ -207,112 +85,27 @@ const PublishIngress: React.FC<PublishIngressProps> = ({ onApplied }) => {
         </TabsList>
 
         <TabsContent value="form">
-          <form onSubmit={handleFormSubmit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">命名空间</span>
-              <select
-                className="rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
-                value={namespace}
-                onChange={(e) => {
-                  setNamespace(e.target.value);
-                  setServiceName("");
-                }}
-                disabled={nsQ.isLoading}
-              >
-                {(nsQ.data ?? []).map((ns) => (
-                  <option key={ns} value={ns}>
-                    {ns}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">后端 Service</span>
-              <select
-                className="rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
-                value={serviceName}
-                onChange={(e) => setServiceName(e.target.value)}
-              >
-                <option value="">请选择</option>
-                {servicesInNs.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">端口</span>
-              <select
-                className="rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
-                value={String(port)}
-                onChange={(e) => setPort(Number(e.target.value))}
-              >
-                {(servicesInNs.find((s) => s.name === serviceName)?.ports ?? [80]).map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-              <span className="font-medium text-gray-700">访问域名 (rules.host)</span>
-              <input
-                className="rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
-                placeholder="app.example.com"
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">Ingress 名称（可空）</span>
-              <input
-                className="rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
-                placeholder="默认: &lt;service&gt;-ingress"
-                value={ingressName}
-                onChange={(e) => setIngressName(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">自定义 DDNS 端口（可选）</span>
-              <input
-                className="rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
-                placeholder={`默认使用全局 ${defaultPortHint}`}
-                value={customDdnsPort}
-                onChange={(e) => setCustomDdnsPort(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium text-gray-700">同步注解键</span>
-              <select
-                className="rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
-                value={syncAnnotation}
-                onChange={(e) =>
-                  setSyncAnnotation(e.target.value === "kube-bt" ? "kube-bt" : "i4t")
-                }
-              >
-                <option value="i4t">i4t.com/baota-sync（README 默认）</option>
-                <option value="kube-bt">kube-bt-sync.io/baota-sync</option>
-              </select>
-            </label>
-
-            <div className="flex items-end sm:col-span-2 lg:col-span-3">
-              <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
-                {submitting ? "下发中…" : "生成并下发 Ingress"}
-              </Button>
-            </div>
-          </form>
+          <IngressGraphicalForm
+            idPrefix="publish-ingress"
+            defaultBaotaSyncEnabled
+            submitButtonText={submitting ? "下发中…" : "生成并下发 Ingress"}
+            disabled={submitting}
+            onValidationError={(m) => setMessage(m)}
+            onPrepareApply={(yaml, summary) => {
+              setPendingYaml(yaml);
+              setPendingSummary(summary);
+              setConfirmOpen(true);
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="yaml">
           <p className="mb-2 text-sm text-gray-500">
             直接粘贴完整 Ingress YAML，提交后由服务端 Apply 到集群（与 README「方式二」一致）。
           </p>
-          <textarea
-            className="mb-3 min-h-[280px] w-full rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-900"
-            value={yamlText}
-            onChange={(e) => setYamlText(e.target.value)}
-          />
+          <div className="mb-3">
+            <YamlEditor value={yamlText} onChange={setYamlText} height="min(45vh, 360px)" />
+          </div>
           <Button
             type="button"
             disabled={submitting}

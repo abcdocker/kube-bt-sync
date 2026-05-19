@@ -3,11 +3,17 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}-svc
   namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}
 spec:
   type: {{ .Values.app.service.type }}
-  ports:
-    - port: {{ .Values.app.service.port }}
-      targetPort: 8080
-      nodePort: {{ .Values.app.service.nodePort }}
   selector:
-    app: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.app.service.port }}
+      targetPort: http
+      protocol: TCP
+      {{- if and (eq .Values.app.service.type "NodePort") .Values.app.service.nodePort }}
+      nodePort: {{ .Values.app.service.nodePort }}
+      {{- end }}

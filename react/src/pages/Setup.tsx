@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "sonner";
 import { apiGetJson, apiPostJson, type SetupStatus } from "@/lib/api";
 
 type K8sMode = "none" | "incluster" | "kubeconfig";
@@ -48,6 +49,9 @@ const Setup: React.FC = () => {
   const [syncIntervalSec, setSyncIntervalSec] = useState(30);
   const [ddnsHost, setDdnsHost] = useState("home.i4t.com");
   const [defaultPort, setDefaultPort] = useState("38333");
+  const [baotaSslCertName, setBaotaSslCertName] = useState("");
+  const [baotaSslPemContent, setBaotaSslPemContent] = useState("");
+  const [baotaSslKeyContent, setBaotaSslKeyContent] = useState("");
 
   // 可选：K8s
   const [k8sMode, setK8sMode] = useState<K8sMode>("none");
@@ -86,6 +90,11 @@ const Setup: React.FC = () => {
     setErr(null);
     try {
       const be = sshBackend.trim();
+      if ((baotaSslPemContent.trim() === "") !== (baotaSslKeyContent.trim() === "")) {
+        setErr("baotaSslPemContent 与 baotaSslKeyContent 必须同时填写");
+        setSubmitting(false);
+        return;
+      }
       const k8s =
         k8sMode === "none"
           ? { mode: "none" as const, kubeconfigYaml: "" }
@@ -120,7 +129,9 @@ const Setup: React.FC = () => {
         ddnsHost: ddnsHost.trim(),
         defaultPort: defaultPort.trim(),
         syncIntervalSec,
-        baotaSslCertName: "",
+        baotaSslCertName: baotaSslCertName.trim(),
+        baotaSslPemContent: baotaSslPemContent.trim(),
+        baotaSslKeyContent: baotaSslKeyContent.trim(),
         dashboardUser: dashboardUser.trim(),
         dashboardSessionDays,
         dashboardCookieSecure: false,
@@ -151,10 +162,13 @@ const Setup: React.FC = () => {
         dashboardPasswordPlain,
       };
       await apiPostJson("/api/setup", body);
+      toast.success("初始化保存成功");
       await qc.invalidateQueries({ queryKey: ["setup-status"] });
       window.location.assign("/login");
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(`保存失败：${msg}`);
     } finally {
       setSubmitting(false);
     }
@@ -259,7 +273,8 @@ const Setup: React.FC = () => {
                     type="password"
                     value={mysqlPassword}
                     onChange={(e) => setMysqlPassword(e.target.value)}
-                    autoComplete="new-password"
+                    autoComplete="off"
+                    spellCheck={false}
                   />
                 </div>
               </div>
@@ -291,7 +306,8 @@ const Setup: React.FC = () => {
                     type="password"
                     value={redisPassword}
                     onChange={(e) => setRedisPassword(e.target.value)}
-                    autoComplete="new-password"
+                    autoComplete="off"
+                    spellCheck={false}
                   />
                 </div>
               </div>
@@ -317,7 +333,8 @@ const Setup: React.FC = () => {
                   onChange={(e) => setDashboardPasswordPlain(e.target.value)}
                   required
                   minLength={8}
-                  autoComplete="new-password"
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
@@ -353,6 +370,8 @@ const Setup: React.FC = () => {
                 <Label>baotaApiKey</Label>
                 <Input
                   type="password"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={baotaApiKey}
                   onChange={(e) => setBaotaApiKey(e.target.value)}
                 />
@@ -380,6 +399,33 @@ const Setup: React.FC = () => {
                   />
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label>baotaSslCertName（可选，宝塔证书夹名称）</Label>
+                <Input value={baotaSslCertName} onChange={(e) => setBaotaSslCertName(e.target.value)} />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>baotaSslPemContent（可选，PEM 证书内容）</Label>
+                  <Textarea
+                    className="min-h-[160px] font-mono text-xs"
+                    value={baotaSslPemContent}
+                    onChange={(e) => setBaotaSslPemContent(e.target.value)}
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>baotaSslKeyContent（可选，KEY 私钥内容）</Label>
+                  <Textarea
+                    className="min-h-[160px] font-mono text-xs"
+                    value={baotaSslKeyContent}
+                    onChange={(e) => setBaotaSslKeyContent(e.target.value)}
+                    placeholder="-----BEGIN PRIVATE KEY-----"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                PEM/KEY 需成对填写；内容会在服务端校验后加密保存到平台存储，不写入 Ingress 注解。若同时配置证书名与 PEM/KEY，平台已保存的 PEM/KEY 优先。
+              </p>
             </CardContent>
           </Card>
 
@@ -441,6 +487,8 @@ const Setup: React.FC = () => {
                   <Label>vcenterPassword</Label>
                   <Input
                     type="password"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={vcenterPassword}
                     onChange={(e) => setVcenterPassword(e.target.value)}
                   />

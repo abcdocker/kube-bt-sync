@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { APP_CONFIG_QUERY_KEY } from "@/hooks/use-app-config";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { YamlEditor } from "@/components/YamlEditor";
 import {
   Select,
   SelectContent,
@@ -11,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "sonner";
 import { apiGetJson, apiPutJson, type RuntimeSettingsDTO } from "@/lib/api";
 
 type K8sMode = "none" | "incluster" | "kubeconfig";
@@ -89,10 +91,14 @@ const K8sConnectWizard: React.FC = () => {
       }
       await apiPutJson("/api/settings/runtime", payload);
       setOk("已保存并重载。");
-      await qc.invalidateQueries({ queryKey: ["app-config"] });
+      toast.success("保存成功");
+      await qc.invalidateQueries({ queryKey: APP_CONFIG_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: ["runtime-status"] });
       await qc.invalidateQueries({ queryKey: ["k8s-summary"] });
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      toast.error(`保存失败：${msg}`);
     } finally {
       setSaving(false);
     }
@@ -140,11 +146,11 @@ const K8sConnectWizard: React.FC = () => {
         {k8sMode === "kubeconfig" && (
           <div className="space-y-2">
             <Label>kubeconfig YAML</Label>
-            <Textarea
-              className="min-h-[220px] font-mono text-xs"
-              placeholder="apiVersion: v1&#10;kind: Config&#10;..."
+            <YamlEditor
               value={kubeYaml}
-              onChange={(e) => setKubeYaml(e.target.value)}
+              onChange={setKubeYaml}
+              height="min(40vh, 320px)"
+              placeholder="apiVersion: v1\nkind: Config\n..."
             />
             {(form.k8s as { kubeconfigYaml?: string } | undefined)?.kubeconfigYaml === "***" &&
               !kubeYaml.trim() && (

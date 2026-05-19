@@ -1,13 +1,35 @@
+# Git / IDE
 .git
 .gitignore
+.github
+.cursor
+.idea
+.vscode
+
+# 文档与示例（不参与 Go/React 构建）
 *.md
+!react/package.json
 .env*
 !.env.example
+connectivity-check.env.example
+
+# 前端
 react/node_modules
 react/dist
+
+# 本地数据与日志（切勿打入镜像）
 data
 *.log
 .DS_Store
 dist
+
+# Helm / 裸 YAML 部署清单（镜像内不需要）
+charts
+deploy
+
+# 独立命令行工具（主程序不依赖）
+cmd
+
+# 其他
 helm/**/*.tgz
-deploy/**/*.md
+*.test

@@ -13,6 +13,8 @@ export type VCenterVMRow = {
   memoryUsageMB?: number;
   memoryMaxMB?: number;
   memoryUsagePercent?: number;
+  /** vCenter Summary.Storage：仅当存在未承诺(uncommitted)字节时，已提交/(已提交+未提交)×100；非来宾机 df 使用率 */
+  diskUsagePercent?: number;
   uptimeSec?: number;
 };
 
@@ -50,6 +52,44 @@ export type VCenterVMsPerfSnapshotResponse = {
   probe?: VCenterVMsPerfSnapshotProbe;
 };
 
+/** GET /api/vcenter/vms/io-prometheus — Telegraf vSphere 等指标，按虚拟机「名称」与 vmname 标签匹配 */
+export type VCenterVMsIoPrometheusResponse = {
+  prometheusConfigured: boolean;
+  ratesByName: Record<string, VCenterVMPerfRateRow>;
+  needVcenterFallback?: boolean;
+  note?: string;
+  queriesUsed?: Partial<{
+    diskRead: string;
+    diskWrite: string;
+    netRx: string;
+    netTx: string;
+  }>;
+};
+
+/** GET /api/vcenter/vms/ikuai-client-stream — yw9381/ikuai_exporter，按私网 IP 与虚拟机 guest IP 对齐 */
+export type VCenterIkuaiLanDeviceRow = {
+  ip: string;
+  mac?: string;
+  hostname?: string;
+  comment?: string;
+  clientType?: string;
+  download: number;
+  upload?: number;
+};
+
+export type VCenterVMsIkuaiClientStreamResponse = {
+  prometheusConfigured: boolean;
+  exporterKind?: "modern" | "legacy";
+  ratesByIp: Record<string, VCenterVMPerfRateRow>;
+  devices: VCenterIkuaiLanDeviceRow[];
+  note?: string;
+  queriesUsed?: Partial<{
+    downloadByIp: string;
+    uploadByIp: string;
+    topology: string;
+  }>;
+};
+
 export type VCenterHostRow = {
   moref: string;
   name: string;
@@ -71,31 +111,9 @@ export type VCenterHostRow = {
 
 export type VCenterHostsResponse = { hosts: VCenterHostRow[] };
 
-/** GET /api/vcenter/hosts/:moref 详情中的 hardware 字段（物理机 SMBIOS / CPU 插槽 / BIOS） */
-export type VCenterHostHardwareDetail = {
-  vendor?: string;
-  model?: string;
-  uuid?: string;
-  serialNumber?: string;
-  otherIdentifyingInfo?: { identifierType?: string; identifierValue?: string }[];
-  cpuPackagesCount?: number;
-  cpuCoresPhysical?: number;
-  cpuThreads?: number;
-  cpuHzPerCore?: number;
-  cpuPackages?: {
-    index: number;
-    vendor?: string;
-    description?: string;
-    hz?: number;
-    busHz?: number;
-  }[];
-  memorySizeBytes?: number;
-  bios?: { biosVersion?: string; vendor?: string; releaseDate?: string };
-  cpuModelSummary?: string;
-};
-
-export type VCenterHostDetailRow = VCenterHostRow & {
-  hardwareDetail?: VCenterHostHardwareDetail | null;
+/** GET /api/vcenter/hosts/:moref — 仅名称与管理网 IP，监控走 Prometheus（job=vmware_vcenter） */
+export type VCenterHostDetailRow = Pick<VCenterHostRow, "moref" | "name"> & {
+  managementVmkIp?: string;
 };
 
 export type VCenterHostDetailResponse = { host: VCenterHostDetailRow };
@@ -127,7 +145,7 @@ export type VCenterVMPerfResponse = {
     netRx: string;
     netTx: string;
   }>;
-  /** 宿主机磁盘/网络使用近 1 小时实时统计回退时返回 */
+  /** 磁盘/网络使用近 1 小时实时统计回退时返回 */
   diskNetRealtime?: {
     rangeFrom: string;
     rangeTo: string;

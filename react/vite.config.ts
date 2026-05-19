@@ -57,7 +57,11 @@ const usedLucideIcons = getUsedLucideIcons();
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiTarget = env.VITE_DEV_API_TARGET || "http://127.0.0.1:8080";
+  const uiBuildVersion = (env.VITE_UI_BUILD_VERSION || "").trim() || "dev";
   return {
+  define: {
+    __KUBEBT_UI_BUILD_VERSION__: JSON.stringify(uiBuildVersion),
+  },
   server: {
     proxy: {
       "/api": {
@@ -65,6 +69,8 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         ws: true,
       },
+      "/r": { target: apiTarget, changeOrigin: true },
+      "/d": { target: apiTarget, changeOrigin: true },
     },
   },
   plugins: [
@@ -91,8 +97,25 @@ export default defineConfig(({ mode }) => {
     }),
   ],
   resolve: {
+    dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/react-dom/") || id.includes("node_modules/react/")) {
+            return "react-vendor";
+          }
+          if (id.includes("node_modules/react-router")) return "router";
+          if (id.includes("node_modules/@tanstack/react-query")) return "react-query";
+          if (id.includes("node_modules/recharts")) return "recharts";
+          if (id.includes("node_modules/@xterm/")) return "xterm";
+          return undefined;
+        },
+      },
     },
   },
   };

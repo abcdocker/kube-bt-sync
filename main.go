@@ -1,18 +1,20 @@
 package main
 
 import (
-<<<<<<< HEAD
+	"context"
 	"kube-bt-sync/internal" // 引用模块
 	"log"
-=======
-	"log"
-	"kube-bt-sync/internal" // 引用模块
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
+	internal.ApplyGOMAXProcsFromEnv()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	log.Println(">>> 初始化 kube-bt-sync 环境...")
-<<<<<<< HEAD
 	app, err := internal.NewServerApp(internal.DataDirFromEnv())
 	if err != nil {
 		log.Fatalf("加载应用状态失败: %v", err)
@@ -27,6 +29,9 @@ func main() {
 	if app.Cfg().BaotaSkipTLSVerify {
 		log.Println(">>> 宝塔 API 使用 HTTPS 且已跳过 TLS 证书校验（自签/证书与 IP 不一致时可用；正规证书可设 BAOTA_SKIP_TLS_VERIFY=false）")
 	}
+	if app.Initialized() && !app.Cfg().DashboardAuthEnabled() {
+		log.Println(">>> 安全提示：当前未启用控制台登录（未配置本地密码且未启用 OIDC）。/api 下除探活/初始化/登录/Webhook 外均无会话鉴权，等效全员管理员；公网暴露时请务必启用 DASHBOARD_PASSWORD 或 OIDC。")
+	}
 
 	if app.K8s() == nil {
 		log.Println(">>> K8s 客户端未就绪（未完成向导或集群不可达）")
@@ -34,17 +39,31 @@ func main() {
 		log.Println(">>> K8s 客户端已连接")
 	}
 
-	go internal.StartSyncer(app)
-	internal.StartWebServer(app)
-=======
-	cfg := internal.LoadConfig()
-
-	log.Println(">>> 连接 K8s 集群...")
-	k8sClient := internal.InitK8sClient()
-
-	// 🌟 核心升级：废弃定时轮询，启动纯事件驱动的 K8s Watcher 雷达
-	go internal.StartIngressWatcher(k8sClient, cfg)
-	
-	internal.StartWebServer(k8sClient, cfg)
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
+	bg := app.Cfg().EnableBackgroundJobs
+	if !bg {
+		log.Println(">>> KUBEBT_ENABLE_BACKGROUND_JOBS=false：本进程仅作 API/Web 副本，不启动宝塔同步、告警巡检、Pod 重启关联/报告清理、出站监视、vCenter Prom 缓存刷新、审计裁剪定时器（多副本时请保证至少一个 Pod 为 true）")
+	}
+	if bg {
+		go internal.StartSyncer(ctx, app)
+	}
+	internal.StartRedisReconnectLoop(ctx, app)
+	internal.StartCrossPodRuntimeSync(ctx, func() *internal.ServerApp { return app })
+	internal.StartRuntimeStatusRefresher(app)
+	if bg {
+		internal.StartHostEgressWatcher(app)
+		internal.StartVCenterPrometheusMetricsRefresher(app)
+		internal.StartK8sKubeSphereChartsCacheWatcher(app)
+		go internal.BastionNativeSSHReconcileLoop(ctx, func() *internal.ServerApp { return app })
+	}
+	internal.StartVCenterSessionKeepalive(func() *internal.ServerApp { return app })
+	internal.InitLoginSecurityState(app)
+	if bg {
+		internal.StartOpsCenterBackground(app)
+		internal.StartK8sRestartCorrelationWorker(app)
+		internal.StartOpenClawGatewayHealthWatcher(app)
+		internal.StartHarborImageIndexWorker(app)
+		internal.StartVCenterEventWorker(app)
+		internal.StartK8sControlPlaneAdvisoryWorker(ctx, app)
+	}
+	internal.StartWebServer(ctx, app)
 }

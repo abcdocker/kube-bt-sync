@@ -1,52 +1,55 @@
-<<<<<<< HEAD
-# 前端构建（产物供 Go embed / 静态目录加载）
-FROM node:20-alpine AS frontend
+# ------------------------------------------------------------------------------
+# 构建参数
+# ------------------------------------------------------------------------------
+ARG BASE_NODE=node:20-alpine
+ARG BASE_GOLANG=golang:1.25.6-alpine
+ARG BASE_RUNTIME=gcr.io/distroless/static-debian12:nonroot
+
+# ------------------------------------------------------------------------------
+# 阶段 1：构建 React 前端
+# ------------------------------------------------------------------------------
+FROM ${BASE_NODE} AS frontend
 WORKDIR /app
 COPY react/package.json react/package-lock.json ./
+# 勿在 npm ci 前设 NODE_ENV=production，否则 devDependencies（含 Vite）不会被安装
 RUN npm ci
 COPY react/ ./
+ENV NODE_ENV=production
 RUN npm run build
 
-FROM golang:alpine AS builder
-ENV CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=auto
+# ------------------------------------------------------------------------------
+# 阶段 2：编译 Go 静态二进制
+# ------------------------------------------------------------------------------
+FROM ${BASE_GOLANG} AS builder
+ENV CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local
 ARG TARGETARCH=amd64
 ARG TARGETOS=linux
-=======
-FROM docker.xuanyuan.run/library/golang:1.25.6 AS builder
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPROXY=https://goproxy.cn,direct
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
+# 国内构建时可覆盖：--build-arg GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+# 仅用于把时区数据拷入最终镜像（Asia/Shanghai 等）
+RUN apk add --no-cache tzdata
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-<<<<<<< HEAD
 COPY --from=frontend /app/dist ./react/dist
-RUN GOARCH=${TARGETARCH} GOOS=${TARGETOS} go build -ldflags="-s -w" -o kube-bt-sync .
+ARG BUILD_VERSION=dev
+RUN GOARCH=${TARGETARCH} GOOS=${TARGETOS} go build -trimpath \
+    -ldflags="-s -w -X kube-bt-sync/internal.BuildVersion=${BUILD_VERSION}" \
+    -o kube-bt-sync .
 
-FROM alpine:3.20
-RUN apk --no-cache add ca-certificates tzdata wget \
-    && addgroup -g 65532 -S appgroup && adduser -u 65532 -S appuser -G appgroup
-ENV TZ=Asia/Shanghai
+# ------------------------------------------------------------------------------
+# 阶段 3：最小运行时镜像（无 shell、无包管理器，攻击面小）
+# ------------------------------------------------------------------------------
+FROM ${BASE_RUNTIME}
 WORKDIR /app
+ENV TZ=Asia/Shanghai
+# 供 Go time.LoadLocation 使用（日志/展示本地时区）
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /build/kube-bt-sync /app/kube-bt-sync
 COPY --from=builder /build/react/dist /app/react/dist
 COPY templates /app/templates/
-RUN chown -R appuser:appgroup /app
-USER appuser:appgroup
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -q -O- http://127.0.0.1:8080/api/health || exit 1
-=======
-RUN go build -ldflags="-s -w" -o kube-bt-sync main.go
-
-# 第二阶段：运行环境 (建议 alpine 也加上你的镜像源代理)
-FROM docker.xuanyuan.run/library/alpine:latest
-# 替换 alpine 的 apk 源为国内阿里云源，加速构建
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates tzdata
-ENV TZ=Asia/Shanghai
-WORKDIR /app
-COPY --from=builder /build/kube-bt-sync /app/
-COPY templates /app/templates/
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
-CMD ["/app/kube-bt-sync"]
+USER nonroot:nonroot
+ENTRYPOINT ["/app/kube-bt-sync"]

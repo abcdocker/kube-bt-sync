@@ -1,48 +1,109 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useAppConfig } from "@/hooks/use-app-config";
+import type { BastionTerminalSessionStatus } from "@/components/BastionTerminalChrome";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@/components/ui/button";
-import { apiGetJson, type AppConfig } from "@/lib/api";
-import { kubeBtXtermOptions } from "@/lib/xtermShared";
+import { apiGetJson, type AppConfig, wsUrlForApiPath } from "@/lib/api";
+import { resolveSshKubeBtXtermOptions, tryLoadXtermWebgl } from "@/lib/xtermShared";
+import PlatformRelayBanner from "@/components/PlatformRelayBanner";
 
 function buildVCenterSshWsUrl(moref: string): string {
-  const path = `/api/vcenter/vms/${encodeURIComponent(moref)}/ssh/ws`;
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}${path}`;
+  return wsUrlForApiPath(`/api/vcenter/vms/${encodeURIComponent(moref)}/ssh/ws`);
+}
+
+function buildBastionExtraSshWsUrl(extraId: string): string {
+  return wsUrlForApiPath(`/api/vcenter/bastion/extra/${encodeURIComponent(extraId)}/ssh/ws`);
 }
 
 type VCenterSshTerminalProps = {
-  moref: string;
+  /** vCenter 虚拟机 moRef */
+  moref?: string;
+  /** 堡垒机策略中的非 vCenter 主机 id */
+  bastionExtraId?: string;
   /** 展示用：vCenter 上报的 Guest 主 IP */
   guestIpHint?: string;
+  /** 满足条件时自动开始连接（如堡垒机嵌入） */
+  autoConnect?: boolean;
+  /** 覆盖终端容器 className */
+  hostClassName?: string;
+  /** 为 false 时不展示横幅、说明与连接按钮行（由外层页面提供工具栏） */
+  showOuterChrome?: boolean;
+  /** 本机字体大小（10–28），与 /api/config 合并 */
+  fontSizeOverride?: number;
+  /** 本机 font-family CSS 串，与 /api/config 合并 */
+  fontFamilyOverride?: string;
+  /** 供外层堡垒顶栏展示连接状态（避免回调引用抖动用 ref 转发） */
+  onBridgeStatus?: (p: { status: BastionTerminalSessionStatus; errMsg: string | null }) => void;
+  /** 当前标签是否可见；从 false→true 时自动聚焦终端（多标签切换场景） */
+  visible?: boolean;
 };
 
 const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
   moref,
+  bastionExtraId,
   guestIpHint,
+  autoConnect = false,
+  hostClassName,
+  showOuterChrome = true,
+  fontSizeOverride,
+  fontFamilyOverride,
+  onBridgeStatus,
+  visible,
 }) => {
-  const cfgQ = useQuery({
-    queryKey: ["app-config"],
-    queryFn: () => apiGetJson<AppConfig>("/api/config"),
-  });
+  const cfgQ = useAppConfig();
 
   const wrapRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const [started, setStarted] = useState(false);
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed" | "error">(
     "idle"
   );
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const disposeRef = useRef<(() => void) | null>(null);
+  const bridgeRef = useRef(onBridgeStatus);
+  bridgeRef.current = onBridgeStatus;
+
+  useEffect(() => {
+    bridgeRef.current?.({ status, errMsg });
+  }, [status, errMsg]);
+
+  // 多标签切换：当前标签变为可见时自动聚焦终端，并重算尺寸。
+  // 因为隐藏期间跳过了 fit.fit()，此处需补一次 resize+focus，
+  // 保证 bash 提示符与实际列宽一致（避免切回后提示符乱序）。
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const term = termRef.current;
+    const fit = fitAddonRef.current;
+    const ws = wsRef.current;
+    if (!term || !fit) return;
+    let rafId: number;
+    rafId = requestAnimationFrame(() => {
+      if (!fitAddonRef.current || !termRef.current) return; // guard: 组件已卸载
+      fit.fit();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const { cols, rows } = term;
+        if (cols > 0 && rows > 0) {
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      }
+      term.focus();
+    });
+    return () => { cancelAnimationFrame(rafId); };
+  }, [visible]);
 
   useEffect(() => {
     const prev = disposeRef.current;
     prev?.();
     disposeRef.current = null;
 
-    if (!started || !moref) {
+    const sshTarget = bastionExtraId ?? moref;
+    if (!started || !sshTarget) {
       setStatus("idle");
       setErrMsg(null);
       return;
@@ -53,30 +114,74 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
       const el = wrapRef.current;
       if (!el || cancelled) return;
 
-      const term = new XTerm(kubeBtXtermOptions);
+      const baseOpts = resolveSshKubeBtXtermOptions(cfgQ.data);
+      if (typeof fontSizeOverride === "number" && fontSizeOverride >= 10 && fontSizeOverride <= 28) {
+        baseOpts.fontSize = fontSizeOverride;
+      }
+      const fam = fontFamilyOverride?.trim();
+      if (fam) {
+        baseOpts.fontFamily = fam;
+      }
+      const term = new XTerm(baseOpts);
+      termRef.current = term;
       const fit = new FitAddon();
+      fitAddonRef.current = fit;
       term.loadAddon(fit);
       term.open(el);
+      tryLoadXtermWebgl(term);
+      // WebGL 替换渲染后端后字符宽度可能微变，首次 fit 仅做粗算；
+      // 再用 rAF 等浏览器完成首帧绘制后重算一次，保证列数准确。
       fit.fit();
+      requestAnimationFrame(() => { if (!cancelled) fit.fit(); });
 
       setStatus("connecting");
       setErrMsg(null);
 
-      const wsUrl = buildVCenterSshWsUrl(moref);
+      const wsUrl = bastionExtraId
+        ? buildBastionExtraSshWsUrl(bastionExtraId)
+        : buildVCenterSshWsUrl(moref!);
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+
+      // 记录上次发送给服务端的尺寸；只有尺寸真正变化时才发 resize，
+      // 防止 Tab 切换 / ResizeObserver 连续触发导致 bash 重复重画提示符。
+      let lastSentCols = 0;
+      let lastSentRows = 0;
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flushResize = () => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const { cols, rows } = term;
+        if (cols < 1 || rows < 1) return;           // 容器被隐藏时 fit 返回 0，跳过
+        if (cols === lastSentCols && rows === lastSentRows) return; // 尺寸未变，跳过
+        lastSentCols = cols;
+        lastSentRows = rows;
+        ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      };
 
       const sendResize = () => {
+        // 容器被隐藏（display:none）时 offsetParent 为 null，此时 fit.fit() 会
+        // 以零宽高调用 term.resize()，破坏 xterm 内部缓冲区状态，
+        // 导致切换回标签后提示符出现乱序（如 "[user@host ~]$ r@host"）。
+        // 跳过隐藏容器的 fit，待重新可见时由 visible prop 触发 focus/fit。
+        if (el.offsetParent === null && el.offsetWidth === 0 && el.offsetHeight === 0) return;
         fit.fit();
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-        }
+        // 防抖：合并 150ms 内的连续触发（Tab 切换时 ResizeObserver 可能快速连发）
+        if (resizeTimer !== null) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          resizeTimer = null;
+          flushResize();
+        }, 150);
       };
 
       ws.onopen = () => {
         if (cancelled) return;
         setStatus("open");
-        sendResize();
+        // 连接建立时立即发送一次（不走防抖，保证首次尺寸正确）
+        fit.fit();
+        flushResize();
+        term.focus();
       };
 
       ws.onmessage = (ev: MessageEvent) => {
@@ -90,7 +195,9 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
 
       ws.onerror = () => {
         if (cancelled) return;
-        setErrMsg("WebSocket 失败（请确认已登录面板，且服务端能访问虚拟机 Guest IP:SSH 端口）");
+        setErrMsg(
+          "WebSocket 失败（请确认已登录本平台；SSH 由平台转发至 Guest，若仍失败请检查平台服务端至该虚拟机网络）"
+        );
         setStatus("error");
       };
 
@@ -112,15 +219,19 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
       ro.observe(el);
 
       disposeRef.current = () => {
+        if (resizeTimer !== null) clearTimeout(resizeTimer);
         window.removeEventListener("resize", onWinResize);
         ro.disconnect();
         sub.dispose();
+        wsRef.current = null;
         try {
           ws.close();
         } catch {
           /* ignore */
         }
+        fitAddonRef.current = null;
         term.dispose();
+        termRef.current = null;
       };
     }, 80);
 
@@ -130,12 +241,44 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
       disposeRef.current?.();
       disposeRef.current = null;
     };
-  }, [started, moref]);
+  }, [started, moref, bastionExtraId, cfgQ.data, fontSizeOverride, fontFamilyOverride]);
 
   const sshOk = cfgQ.data?.vcenterVmSshConfigured === true;
 
+  useEffect(() => {
+    const t = bastionExtraId ?? moref;
+    if (!autoConnect || !sshOk || !t) return;
+    setStarted(true);
+  }, [autoConnect, sshOk, moref, bastionExtraId]);
+
+  const hostCls =
+    hostClassName ??
+    "vc-ssh-xterm-host h-[420px] max-h-[min(560px,70vh)] min-h-[280px] w-full shrink-0 overflow-hidden rounded-lg border border-gray-800 bg-[#1e1e1e] p-2";
+
+  if (!showOuterChrome) {
+    if (!sshOk) {
+      return (
+        <div className="flex h-full min-h-[200px] items-center justify-center px-4 text-center text-sm text-slate-500">
+          未配置虚拟机 SSH（VCENTER_VM_SSH_* 或存储中的逐台凭据），请见 vCenter 设置。
+        </div>
+      );
+    }
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {errMsg && !onBridgeStatus && (
+          <div className="shrink-0 rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+            {errMsg}
+          </div>
+        )}
+        {started && <div ref={wrapRef} className={hostCls} />}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
+      <PlatformRelayBanner />
+
       {!sshOk && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-medium">未启用 SSH 终端</p>
@@ -150,7 +293,7 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
             中填写「虚拟机 SSH 终端」；也可设置环境变量{" "}
             <code className="rounded bg-white px-1">VCENTER_VM_SSH_USER</code> 与{" "}
             <code className="rounded bg-white px-1">VCENTER_VM_SSH_PASSWORD</code>。
-            本进程须能直连 Guest IP，凭据不经过浏览器。
+            SSH 由<strong>平台服务端</strong>转发至 vCenter 上报的 Guest IP；您的浏览器不直连虚拟机，凭据也不经过浏览器。
           </p>
         </div>
       )}
@@ -204,12 +347,7 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
               {errMsg}
             </div>
           )}
-          {started && (
-            <div
-              ref={wrapRef}
-              className="vc-ssh-xterm-host h-[420px] max-h-[min(560px,70vh)] min-h-[280px] w-full shrink-0 overflow-hidden rounded-lg border border-gray-800 bg-[#1e1e1e] p-2"
-            />
-          )}
+          {started && <div ref={wrapRef} className={hostCls} />}
         </>
       )}
     </div>

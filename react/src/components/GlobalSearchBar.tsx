@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useAppConfig } from "@/hooks/use-app-config";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
@@ -37,10 +38,7 @@ const GlobalSearchBar: React.FC = () => {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const cfgQ = useQuery({
-    queryKey: ["app-config"],
-    queryFn: () => apiGetJson<AppConfig>("/api/config"),
-  });
+  const cfgQ = useAppConfig();
   const cfg = cfgQ.data;
 
   const q = debounced.trim();
@@ -48,14 +46,14 @@ const GlobalSearchBar: React.FC = () => {
 
   const vmsQ = useQuery({
     queryKey: ["vcenter-vms"],
-    queryFn: () => apiGetJson<VCenterVMsResponse>("/api/vcenter/vms"),
+    queryFn: ({ signal }) => apiGetJson<VCenterVMsResponse>("/api/vcenter/vms", { signal }),
     enabled: Boolean(cfg?.vcenterConfigured && enabled),
     staleTime: 60_000,
   });
 
   const podsQ = useQuery({
     queryKey: ["global-search-pods"],
-    queryFn: () => apiGetJson<PodRow[]>("/api/k8s/pods"),
+    queryFn: ({ signal }) => apiGetJson<PodRow[]>("/api/k8s/pods", { signal }),
     enabled: Boolean(cfg?.k8sConfigured && enabled),
     staleTime: 60_000,
   });

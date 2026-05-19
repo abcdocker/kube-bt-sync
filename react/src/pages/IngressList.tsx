@@ -23,7 +23,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { YamlEditor } from "@/components/YamlEditor";
 import { apiGetJson, apiGetText, apiPostJson, type IngressRow } from "@/lib/api";
+import { extractErrorMessage } from "@/lib/extract-error-message";
+import { toast } from "sonner";
 
 const IngressList: React.FC = () => {
   const queryClient = useQueryClient();
@@ -41,7 +44,7 @@ const IngressList: React.FC = () => {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["ingresses-all"],
-    queryFn: () => apiGetJson<IngressRow[]>("/api/ingresses"),
+    queryFn: ({ signal }) => apiGetJson<IngressRow[]>("/api/ingresses", { signal }),
   });
 
   const filtered = useMemo(() => {
@@ -68,7 +71,7 @@ const IngressList: React.FC = () => {
       );
       setEditYaml(yaml);
     } catch (e) {
-      setEditYaml(`# 加载失败: ${(e as Error).message}`);
+      setEditYaml(`# 加载失败: ${extractErrorMessage(e)}`);
     } finally {
       setEditLoading(false);
     }
@@ -81,7 +84,7 @@ const IngressList: React.FC = () => {
       setEditOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] });
     } catch (e) {
-      alert((e as Error).message);
+      toast.error(extractErrorMessage(e));
     } finally {
       setSaveLoading(false);
     }
@@ -109,7 +112,7 @@ const IngressList: React.FC = () => {
       setDelRow(null);
       void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] });
     } catch (e) {
-      alert((e as Error).message);
+      toast.error(extractErrorMessage(e));
     } finally {
       setDelLoading(false);
     }
@@ -123,7 +126,7 @@ const IngressList: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Ingress Rules</h1>
           <p className="text-sm text-gray-500">
-            集群内全部 Ingress；「托管」表示已打 README 中的同步注解并由 kube-bt-sync 处理。
+            集群内全部 Ingress；「托管」表示已打 README 中的同步注解并由 kube-bt-sync 处理。回源列展示当前宝塔代理使用的 HTTP/HTTPS、域名与端口。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -136,7 +139,7 @@ const IngressList: React.FC = () => {
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {(error as Error).message}
+          {extractErrorMessage(error)}
         </div>
       )}
 
@@ -182,6 +185,9 @@ const IngressList: React.FC = () => {
                   托管
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  回源
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Age
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
@@ -192,13 +198,13 @@ const IngressList: React.FC = () => {
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 text-sm">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500 text-sm">
                     加载中...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500 text-sm">
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500 text-sm">
                     无 Ingress
                   </td>
                 </tr>
@@ -242,6 +248,17 @@ const IngressList: React.FC = () => {
                         >
                           {item.managed ? "已托管" : "—"}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {item.managed ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-block w-max rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 font-mono text-xs text-blue-700">
+                              {(item.scheme || "http").toUpperCase()}://{item.upstreamHost || "—"}:{item.ddnsPort || "—"}
+                            </span>
+                          </div>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">{age}</td>
                       <td className="px-6 py-4 text-right">
@@ -324,7 +341,7 @@ const IngressList: React.FC = () => {
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent
-          className="max-h-[90vh] w-full max-w-4xl overflow-hidden flex flex-col gap-0 sm:max-w-4xl"
+          className="flex max-h-[90vh] w-full max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden sm:max-w-7xl"
           showCloseButton
         >
           <DialogHeader>
@@ -335,10 +352,10 @@ const IngressList: React.FC = () => {
           {editLoading ? (
             <p className="text-sm text-gray-500">加载 YAML…</p>
           ) : (
-            <textarea
-              className="min-h-[400px] w-full flex-1 rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-900"
+            <YamlEditor
               value={editYaml}
-              onChange={(e) => setEditYaml(e.target.value)}
+              onChange={setEditYaml}
+              height="min(65vh, 560px)"
             />
           )}
           <DialogFooter>

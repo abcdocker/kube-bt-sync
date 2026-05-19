@@ -1,11 +1,24 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  Box,
+  Boxes,
+  ChevronRight,
+  HardDrive,
+  LayoutGrid,
+  Loader2,
+  Maximize2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { YamlEditor } from "@/components/YamlEditor";
 import {
   Table,
   TableBody,
@@ -31,8 +44,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiDelete, apiGetJson, apiPostJson } from "@/lib/api";
+import { toast } from "sonner";
 import { parseAge } from "./parseAge";
 import { cn } from "@/lib/utils";
+import { K8sObjectRevisionTriggerButton } from "@/components/K8sObjectRevisionDialog";
+import {
+  K8sGraphicEditDialog,
+  type K8sGraphicKind,
+} from "./k8s/K8sGraphicEditDialog";
+import {
+  formatSchedulingPrecheckError,
+  isProbablySingleYamlDoc,
+  schedulingPrecheckYaml,
+} from "./workloadSchedulingPrecheck";
+import {
+  WORKLOAD_SCHEDULE_PRECHECK_APPLY_HINT,
+  workloadApplyPipelineLabel,
+  workloadApplyPipelineProgress,
+  type WorkloadApplyPipelineStep,
+} from "./workloadApplyPipeline";
 
 export type K8sColumn = {
   key: string;
@@ -55,22 +85,40 @@ export type ClusterK8sListPageProps = {
   enableCrud?: boolean;
   /** Deployment / StatefulSet：显示「关联 Pods」列（用 labelSelector 筛 Pod） */
   workloadPodsLink?: boolean;
+  /** 命名空间内：资源名称链到工作负载详情页（概览 / Pods / YAML） */
+  workloadDetailSegment?: "deployments" | "statefulsets" | "daemonsets";
+  /** PVC 列表：显示「扩容」入口（POST /api/k8s/pvcs/.../expand） */
+  enablePvcExpand?: boolean;
 };
 
 const YAML_KIND: Record<string, string> = {
   deployments: "Deployment",
   statefulsets: "StatefulSet",
+  daemonsets: "DaemonSet",
   services: "Service",
   pvcs: "PersistentVolumeClaim",
   configmaps: "ConfigMap",
+  secrets: "Secret",
 };
 
 const DELETE_KIND: Record<string, string> = {
   deployments: "deployment",
   statefulsets: "statefulset",
+  daemonsets: "daemonset",
   services: "service",
   pvcs: "pvc",
   configmaps: "configmap",
+  secrets: "secret",
+};
+
+/** 支持图形化编辑的 apiSuffix → Kubernetes kind */
+const GRAPHIC_KIND: Record<string, K8sGraphicKind> = {
+  deployments: "Deployment",
+  statefulsets: "StatefulSet",
+  daemonsets: "DaemonSet",
+  services: "Service",
+  configmaps: "ConfigMap",
+  secrets: "Secret",
 };
 
 function cellValue(
@@ -94,6 +142,8 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
   namespace: namespaceFixed,
   enableCrud = false,
   workloadPodsLink = false,
+  workloadDetailSegment,
+  enablePvcExpand = false,
 }) => {
   const queryClient = useQueryClient();
   const [nsFilter, setNsFilter] = useState("");
@@ -105,30 +155,62 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
   );
   const dataQ = useQuery({
     queryKey: [queryKey, effectiveNs, namespaceFixed ?? ""],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       apiGetJson<Record<string, unknown>[]>(
         `/api/k8s/${apiSuffix}${effectiveNs ? `?namespace=${encodeURIComponent(effectiveNs)}` : ""}`
-      ),
+      , { signal }),
   });
 
   const yamlKind = YAML_KIND[apiSuffix];
   const deleteKind = DELETE_KIND[apiSuffix];
   const canCrud =
     Boolean(enableCrud && namespaceFixed && yamlKind && deleteKind);
+  const graphicKind = GRAPHIC_KIND[apiSuffix];
+  const canGraphic = Boolean(canCrud && graphicKind);
 
   const [yamlOpen, setYamlOpen] = useState(false);
   const [yamlDraft, setYamlDraft] = useState("");
   const [yamlMode, setYamlMode] = useState<"create" | "edit">("create");
+  /** 列表「编辑 YAML」时的资源名，用于变更记录入口 */
+  const [yamlEditName, setYamlEditName] = useState("");
 
   const [delTarget, setDelTarget] = useState<{ name: string } | null>(null);
+  const [expandTarget, setExpandTarget] = useState<{ name: string; capacity: string } | null>(null);
+  const [expandSizeDraft, setExpandSizeDraft] = useState("");
+
+  const [graphicOpen, setGraphicOpen] = useState(false);
+  const [graphicName, setGraphicName] = useState("");
+  const [applyPipelineStep, setApplyPipelineStep] = useState<WorkloadApplyPipelineStep | null>(null);
+
+  const workloadYamlSchedPrecheck =
+    Boolean(yamlKind) && (apiSuffix === "deployments" || apiSuffix === "statefulsets");
 
   const applyMut = useMutation({
-    mutationFn: (yamlContent: string) =>
-      apiPostJson<{ message?: string }>("/api/k8s/apply-yaml", { yamlContent }),
-    onSuccess: () => {
+    mutationFn: async (yamlContent: string) => {
+      try {
+        if (workloadYamlSchedPrecheck && yamlContent.trim() && yamlContent !== "加载中…") {
+          if (isProbablySingleYamlDoc(yamlContent)) {
+            setApplyPipelineStep("precheck");
+            await schedulingPrecheckYaml(yamlContent);
+          }
+        }
+        setApplyPipelineStep("apply");
+        return apiPostJson<{ message?: string }>("/api/k8s/apply-yaml", { yamlContent });
+      } finally {
+        setApplyPipelineStep(null);
+      }
+    },
+    onSuccess: (_data, yamlContent) => {
+      const ranPrecheck =
+        workloadYamlSchedPrecheck &&
+        String(yamlContent).trim() &&
+        String(yamlContent) !== "加载中…" &&
+        isProbablySingleYamlDoc(String(yamlContent));
+      toast.success(ranPrecheck ? "调度预检已通过，YAML 已提交" : "YAML 已提交");
       setYamlOpen(false);
       void queryClient.invalidateQueries({ queryKey: [queryKey] });
       void queryClient.invalidateQueries({ queryKey: ["k8s-namespaces-stats"] });
+      void queryClient.invalidateQueries({ queryKey: ["k8s-object-revisions"] });
     },
   });
 
@@ -144,8 +226,24 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
     },
   });
 
+  const pvcExpandMut = useMutation({
+    mutationFn: ({ name, size }: { name: string; size: string }) =>
+      apiPostJson(
+        `/api/k8s/pvcs/${encodeURIComponent(namespaceFixed!)}/${encodeURIComponent(name)}/expand`,
+        { size }
+      ),
+    onSuccess: () => {
+      setExpandTarget(null);
+      toast.success("已提交 PVC 扩容");
+      void queryClient.invalidateQueries({ queryKey: [queryKey] });
+      void queryClient.invalidateQueries({ queryKey: ["k8s-namespaces-stats"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const openCreateYaml = () => {
     setYamlMode("create");
+    setYamlEditName("");
     setYamlDraft("");
     setYamlOpen(true);
   };
@@ -153,6 +251,7 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
   const openEditYaml = async (name: string) => {
     if (!namespaceFixed || !yamlKind) return;
     setYamlMode("edit");
+    setYamlEditName(name);
     setYamlOpen(true);
     setYamlDraft("加载中…");
     try {
@@ -166,8 +265,18 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
   };
 
   const showPodsCol = Boolean(
-    workloadPodsLink && namespaceFixed && (apiSuffix === "deployments" || apiSuffix === "statefulsets")
+    workloadPodsLink &&
+      namespaceFixed &&
+      (apiSuffix === "deployments" || apiSuffix === "statefulsets" || apiSuffix === "daemonsets")
   );
+  const nameLinksToWorkloadDetail = Boolean(
+    namespaceFixed &&
+      workloadDetailSegment &&
+      (apiSuffix === "deployments" || apiSuffix === "statefulsets" || apiSuffix === "daemonsets")
+  );
+
+  const podLikeRows = Boolean(namespaceFixed);
+  const showPvcExpand = Boolean(enablePvcExpand && namespaceFixed && apiSuffix === "pvcs" && canCrud);
 
   return (
     <div className="space-y-4">
@@ -213,7 +322,7 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
             type="button"
             variant="secondary"
             size="sm"
-            className="h-10 gap-1.5"
+            className={cn("h-10 gap-1.5", podLikeRows && "rounded-lg border-slate-200")}
             onClick={() => void dataQ.refetch()}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", dataQ.isFetching && "animate-spin")} />
@@ -241,17 +350,24 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
 
       {dataQ.data && dataQ.data.length > 0 && (
         <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]">
-          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-4 py-3 sm:px-5">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-4 py-3 sm:px-5">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               资源列表
             </span>
+            <span className="text-xs text-slate-500">共 {dataQ.data.length} 条</span>
           </div>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-100 hover:bg-transparent">
-                  {displayColumns.map((c) => (
-                    <TableHead key={c.key} className="text-xs font-semibold text-slate-500">
+                  {displayColumns.map((c, colIdx) => (
+                    <TableHead
+                      key={c.key}
+                      className={cn(
+                        "text-xs font-semibold text-slate-500",
+                        podLikeRows && colIdx === 0 && c.key === "name" && "min-w-[200px] pl-5"
+                      )}
+                    >
                       {c.header}
                     </TableHead>
                   ))}
@@ -261,7 +377,9 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
                     </TableHead>
                   )}
                   {canCrud && (
-                    <TableHead className="w-[140px] pr-4 text-right text-xs font-semibold text-slate-500">
+                    <TableHead
+                      className={`pr-4 text-right text-xs font-semibold text-slate-500 ${showPvcExpand ? "w-[220px]" : "w-[180px]"}`}
+                    >
                       操作
                     </TableHead>
                   )}
@@ -282,22 +400,127 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
                     <TableRow
                       key={`${String(row.namespace ?? idx)}-${String(row.name ?? idx)}-${idx}`}
                       className={cn(
-                        "border-slate-100 transition-colors",
+                        "group border-slate-100 transition-colors",
                         idx % 2 === 0 ? "bg-white" : "bg-slate-50/40",
-                        "hover:bg-blue-50/40"
+                        podLikeRows ? "hover:bg-blue-50/50" : "hover:bg-blue-50/40"
                       )}
                     >
-                      {displayColumns.map((col) => (
-                        <TableCell
-                          key={col.key}
-                          className={cn(
-                            "py-3 text-sm",
-                            col.mono && "font-mono text-xs"
-                          )}
-                        >
-                          {cellValue(row, col)}
-                        </TableCell>
-                      ))}
+                      {displayColumns.map((col) => {
+                        const rawName = String(row.name ?? "");
+                        const detailHref =
+                          nameLinksToWorkloadDetail && col.key === "name" && workloadDetailSegment
+                            ? `/cluster/ns/${encodeURIComponent(namespaceFixed!)}/${workloadDetailSegment}/${encodeURIComponent(rawName)}`
+                            : null;
+                        const pvcFilesHref =
+                          apiSuffix === "pvcs" && namespaceFixed && col.key === "name"
+                            ? `/cluster/ns/${encodeURIComponent(namespaceFixed)}/pvcs/${encodeURIComponent(rawName)}/files`
+                            : null;
+                        const cmSecretDetailHref =
+                          namespaceFixed &&
+                          (apiSuffix === "configmaps" || apiSuffix === "secrets") &&
+                          col.key === "name"
+                            ? `/cluster/ns/${encodeURIComponent(namespaceFixed)}/${apiSuffix}/${encodeURIComponent(rawName)}`
+                            : null;
+                        if (podLikeRows && col.key === "name") {
+                          return (
+                            <TableCell key={col.key} className="py-3.5 pl-5 align-middle">
+                              {detailHref ? (
+                                <Link
+                                  to={detailHref}
+                                  className="flex items-start gap-2.5"
+                                  title="打开工作负载详情（概览 / 容器组 / YAML）"
+                                >
+                                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 ring-1 ring-slate-200/80 transition-colors group-hover:bg-blue-50 group-hover:text-blue-700 group-hover:ring-blue-100">
+                                    <Box className="h-4 w-4" strokeWidth={2} aria-hidden />
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="flex items-center gap-1 font-mono text-[13px] font-semibold text-slate-900 group-hover:text-blue-700">
+                                      {cellValue(row, col)}
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                                      metadata.name
+                                    </span>
+                                  </span>
+                                </Link>
+                              ) : pvcFilesHref ? (
+                                <Link
+                                  to={pvcFilesHref}
+                                  className="flex items-start gap-2.5"
+                                  title="浏览 PVC 内文件（需 Pod 挂载该卷）"
+                                >
+                                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-700 ring-1 ring-violet-200/80 transition-colors group-hover:bg-violet-100 group-hover:ring-violet-200">
+                                    <HardDrive className="h-4 w-4" strokeWidth={2} aria-hidden />
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="flex items-center gap-1 font-mono text-[13px] font-semibold text-slate-900 group-hover:text-violet-800">
+                                      {cellValue(row, col)}
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                                      PVC · 文件浏览
+                                    </span>
+                                  </span>
+                                </Link>
+                              ) : cmSecretDetailHref ? (
+                                <Link
+                                  to={cmSecretDetailHref}
+                                  className="flex items-start gap-2.5"
+                                  title="打开详情与关联资源"
+                                >
+                                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-800 ring-1 ring-amber-200/80 transition-colors group-hover:bg-amber-100">
+                                    <LayoutGrid className="h-4 w-4" strokeWidth={2} aria-hidden />
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="flex items-center gap-1 font-mono text-[13px] font-semibold text-slate-900 group-hover:text-blue-700">
+                                      {cellValue(row, col)}
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                                      metadata.name
+                                    </span>
+                                  </span>
+                                </Link>
+                              ) : (
+                                <div className="flex items-start gap-2.5">
+                                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 ring-1 ring-slate-200/80">
+                                    <Box className="h-4 w-4" strokeWidth={2} aria-hidden />
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block font-mono text-[13px] font-semibold text-slate-900">
+                                      {cellValue(row, col)}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                                      metadata.name
+                                    </span>
+                                  </span>
+                                </div>
+                              )}
+                            </TableCell>
+                          );
+                        }
+                        return (
+                          <TableCell
+                            key={col.key}
+                            className={cn(
+                              "py-3 text-sm",
+                              col.mono && "font-mono text-xs"
+                            )}
+                          >
+                            {detailHref ? (
+                              <Link
+                                to={detailHref}
+                                className="font-medium text-blue-700 hover:underline"
+                                title="打开工作负载详情（概览 / 容器组 / YAML）"
+                              >
+                                {cellValue(row, col)}
+                              </Link>
+                            ) : (
+                              cellValue(row, col)
+                            )}
+                          </TableCell>
+                        );
+                      })}
                       {showPodsCol && (
                         <TableCell className="align-middle">
                           {podsHref ? (
@@ -315,6 +538,39 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
                       {canCrud && (
                         <TableCell className="pr-4 text-right align-middle">
                           <div className="flex justify-end gap-1">
+                            {canGraphic && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2"
+                                title="图形编辑"
+                                onClick={() => {
+                                  setGraphicName(name);
+                                  setGraphicOpen(true);
+                                }}
+                              >
+                                <LayoutGrid className="h-3.5 w-3.5" />
+                                <span className="sr-only">图形</span>
+                              </Button>
+                            )}
+                            {showPvcExpand && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-violet-700 hover:text-violet-800"
+                                title="扩容 PVC（须 StorageClass 允许扩容）"
+                                onClick={() => {
+                                  const cap = String(row.capacity ?? "").trim();
+                                  setExpandTarget({ name, capacity: cap });
+                                  setExpandSizeDraft(cap && cap !== "—" ? cap : "");
+                                }}
+                              >
+                                <Maximize2 className="h-3.5 w-3.5" />
+                                <span className="sr-only">扩容</span>
+                              </Button>
+                            )}
                             <Button
                               type="button"
                               variant="ghost"
@@ -347,18 +603,80 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
         </div>
       )}
 
-      <Dialog open={yamlOpen} onOpenChange={setYamlOpen}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      {canGraphic && graphicKind && namespaceFixed && (
+        <K8sGraphicEditDialog
+          open={graphicOpen}
+          onOpenChange={(o) => {
+            setGraphicOpen(o);
+            if (!o) setGraphicName("");
+          }}
+          kind={graphicKind}
+          namespace={namespaceFixed}
+          name={graphicName}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({ queryKey: [queryKey] });
+            void queryClient.invalidateQueries({ queryKey: ["k8s-namespaces-stats"] });
+            void queryClient.invalidateQueries({ queryKey: ["k8s-object-revisions"] });
+          }}
+        />
+      )}
+
+      <Dialog
+        open={yamlOpen}
+        onOpenChange={(o) => {
+          setYamlOpen(o);
+          if (!o) setYamlEditName("");
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full max-w-[calc(100%-2rem)] flex-col gap-3 overflow-y-auto sm:max-w-7xl">
           <DialogHeader>
             <DialogTitle>{yamlMode === "create" ? "应用 YAML（创建或更新）" : "编辑 YAML"}</DialogTitle>
           </DialogHeader>
-          <Textarea
-            className="min-h-[320px] font-mono text-xs"
+          <YamlEditor
             value={yamlDraft}
-            onChange={(e) => setYamlDraft(e.target.value)}
-            spellCheck={false}
+            onChange={setYamlDraft}
+            readOnly={yamlDraft === "加载中…"}
+            height="min(62vh, 500px)"
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          {applyMut.isPending ? (
+            <div className="rounded-lg border border-sky-200/80 bg-sky-50/50 px-3 py-2 dark:border-sky-900/50 dark:bg-sky-950/25">
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-sky-950 dark:text-sky-100/90">
+                <span className="font-medium">
+                  {applyPipelineStep
+                    ? workloadApplyPipelineLabel(applyPipelineStep, "apply-yaml")
+                    : "准备提交…"}
+                </span>
+                <span className="tabular-nums text-muted-foreground">
+                  {workloadYamlSchedPrecheck ? "约 8～40 s" : "约 3～15 s"}
+                </span>
+              </div>
+              <Progress
+                className="h-2"
+                value={applyPipelineStep ? workloadApplyPipelineProgress(applyPipelineStep) : 6}
+              />
+              {workloadYamlSchedPrecheck ? (
+                <p className="mt-1.5 text-[11px] text-sky-900/80 dark:text-sky-200/80">
+                  {WORKLOAD_SCHEDULE_PRECHECK_APPLY_HINT}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter className="flex flex-wrap gap-2 sm:justify-end">
+            {yamlMode === "edit" && yamlEditName && namespaceFixed && yamlKind ? (
+              <K8sObjectRevisionTriggerButton
+                className="mr-auto"
+                namespace={namespaceFixed}
+                kind={yamlKind}
+                name={yamlEditName}
+                onApplied={() => {
+                  void queryClient.invalidateQueries({ queryKey: [queryKey] });
+                  void queryClient.invalidateQueries({ queryKey: ["k8s-namespaces-stats"] });
+                  void queryClient.invalidateQueries({
+                    queryKey: ["k8s-object-revisions", namespaceFixed, yamlKind, yamlEditName],
+                  });
+                }}
+              />
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => setYamlOpen(false)}>
               取消
             </Button>
@@ -367,12 +685,80 @@ export const ClusterK8sListPage: React.FC<ClusterK8sListPageProps> = ({
               disabled={applyMut.isPending}
               onClick={() => void applyMut.mutateAsync(yamlDraft)}
             >
-              {applyMut.isPending ? "提交中…" : "提交应用"}
+              {applyMut.isPending ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  预检并提交…
+                </span>
+              ) : workloadYamlSchedPrecheck ? (
+                "预检并提交应用"
+              ) : (
+                "提交应用"
+              )}
             </Button>
           </DialogFooter>
           {applyMut.isError && (
-            <p className="text-sm text-red-600">{(applyMut.error as Error).message}</p>
+            <p className="text-sm text-red-600">
+              {formatSchedulingPrecheckError(applyMut.error) || (applyMut.error as Error).message}
+            </p>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(expandTarget)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setExpandTarget(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>扩容 PVC</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-slate-600">
+            命名空间 <span className="font-mono">{namespaceFixed}</span> ·{" "}
+            <span className="font-mono">{expandTarget?.name}</span>
+            {expandTarget?.capacity ? (
+              <>
+                <br />
+                当前容量（展示值）：<span className="font-mono">{expandTarget.capacity}</span>
+              </>
+            ) : null}
+            <br />
+            新容量须<strong>大于</strong>当前声明；需 StorageClass <code className="rounded bg-slate-100 px-0.5">allowVolumeExpansion</code>。
+          </p>
+          <div>
+            <Label className="text-xs">新容量</Label>
+            <Input
+              className="mt-1 font-mono text-sm"
+              placeholder="例如 50Gi"
+              value={expandSizeDraft}
+              onChange={(e) => setExpandSizeDraft(e.target.value)}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button type="button" variant="secondary" onClick={() => setExpandTarget(null)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="bg-violet-600 hover:bg-violet-700"
+              disabled={pvcExpandMut.isPending || !expandTarget}
+              onClick={() => {
+                if (!expandTarget) return;
+                const s = expandSizeDraft.trim();
+                if (!s) {
+                  toast.error("请填写新容量");
+                  return;
+                }
+                void pvcExpandMut.mutateAsync({ name: expandTarget.name, size: s });
+              }}
+            >
+              {pvcExpandMut.isPending ? "提交中…" : "扩容"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

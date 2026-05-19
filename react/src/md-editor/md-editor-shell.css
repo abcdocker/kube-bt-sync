@@ -1,0 +1,289 @@
+/* 仅作用于 .md-editor-root，不影响全局布局与其它页面 */
+.md-editor-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.md-editor-root .md-editor-inner {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+  background: #f1f5f9;
+}
+
+.md-editor-root .md-editor-panel {
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid #e2e8f0;
+  box-shadow: none;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.md-editor-root .md-editor-excalidraw-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.md-editor-root .md-editor-excalidraw-host .excalidraw {
+  height: 100% !important;
+}
+
+.md-editor-root .md-editor-placeholder {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  padding: 1.5rem;
+  background: linear-gradient(180deg, #fafafa 0%, #fff 40%);
+}
+
+.md-editor-root .md-editor-placeholder p {
+  margin: 0;
+}
+
+/* ByteMD 默认 height:300px + body 用 calc(100%-58px)；父级高度未解析时整页会塌成一条缝 */
+.md-editor-root .bytemd,
+.md-editor-root .bytemd.bytemd-split {
+  border: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  max-width: none !important;
+}
+
+.md-editor-root .bytemd-toolbar {
+  flex-shrink: 0 !important;
+}
+
+.md-editor-root .bytemd-body {
+  max-width: none !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: auto !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  overflow: hidden !important;
+}
+
+.md-editor-root .bytemd-status {
+  flex-shrink: 0 !important;
+}
+
+.md-editor-root .bytemd-editor,
+.md-editor-root .bytemd-preview {
+  display: block !important;
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  align-self: stretch !important;
+}
+
+.md-editor-root .bytemd-editor {
+  overflow: hidden !important;
+}
+
+.md-editor-root .bytemd-preview {
+  overflow: auto !important;
+}
+
+.md-editor-root .bytemd-sidebar {
+  flex-shrink: 0 !important;
+}
+
+.md-editor-root .bytemd-editor .CodeMirror-wrap,
+.md-editor-root .bytemd-editor .CodeMirror {
+  height: 100% !important;
+  min-height: min(420px, 50vh) !important;
+}
+
+.md-editor-root .bytemd-editor .CodeMirror-scroll {
+  height: 100% !important;
+  min-height: min(420px, 50vh) !important;
+}
+
+.md-editor-root .bytemd-toolbar {
+  border-bottom: 1px solid #e2e8f0 !important;
+  background: #f8fafc !important;
+}
+
+.md-editor-root .bytemd-status {
+  border-top: 1px solid #e2e8f0 !important;
+  background: #fafafa !important;
+}
+
+.md-editor-root .markdown-body {
+  padding: 1rem !important;
+}
+
+.md-editor-root .markdown-body ul {
+  padding-left: 1.5em !important;
+  margin: 0.8em 0 !important;
+  list-style-type: disc !important;
+}
+
+.md-editor-root .markdown-body .task-list-item {
+  list-style-type: none !important;
+  padding-left: 0 !important;
+  margin: 0.5em 0 !important;
+  display: flex !important;
+  align-items: flex-start !important;
+}
+
+.md-editor-root .markdown-body .task-list-item input[type="checkbox"] {
+  margin: 0.25em 0.5em 0 0 !important;
+  flex-shrink: 0 !important;
+}
+
+.md-editor-root .bytemd-preview {
+  padding: 1rem !important;
+  font-size: 16px !important;
+  line-height: 1.7 !important;
+  background: #fafafa !important;
+}
+
+.md-editor-root .bytemd-tippy-right:last-child {
+  display: none;
+}
+
+/* 预览区：Mac 窗口风代码块 + Xcode 风高亮（与分享页一致） */
+.md-editor-root .bytemd-preview .markdown-body :not(pre) > code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-window {
+  margin: 0.85em 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.06);
+  background: #fff;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 38px;
+  padding: 0 10px 0 12px;
+  background: linear-gradient(180deg, #ececec 0%, #e4e4e6 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  user-select: none;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-dot {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 0.5px 1px rgba(0, 0, 0, 0.22);
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-dot:nth-child(1) {
+  background: #ff5f57;
+  border: 1px solid #e0443e;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-dot:nth-child(2) {
+  background: #febc2e;
+  border: 1px solid #dba524;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-dot:nth-child(3) {
+  background: #28c840;
+  border: 1px solid #1aab29;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-lang {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: #6e6e73;
+  text-transform: lowercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-copy {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #3c3c43;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-copy:hover {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-copy.fs-code-copy-done {
+  color: #1a7f37;
+  border-color: rgba(26, 127, 55, 0.28);
+  background: rgba(26, 127, 55, 0.1);
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-scroll {
+  overflow: auto;
+  max-width: 100%;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-scroll pre {
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  overflow: visible !important;
+}
+
+.md-editor-root .bytemd-preview .markdown-body .fs-code-scroll pre code.hljs {
+  display: block;
+  padding: 14px 16px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  tab-size: 4;
+  border-radius: 0 !important;
+}

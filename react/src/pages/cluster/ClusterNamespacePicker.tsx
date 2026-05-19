@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FolderOpen, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, FolderTree, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,13 +16,9 @@ import { apiGetJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   parseResourceSearchParam,
-  RESOURCE_TAB_META,
+  resourceTabMeta,
   type ClusterScopedResource,
 } from "./clusterNamespaceRoutes";
-
-function resourceMeta(key: ClusterScopedResource) {
-  return RESOURCE_TAB_META.find((x) => x.key === key)!;
-}
 
 export type NamespaceStatsRow = {
   namespace: string;
@@ -73,12 +69,12 @@ const ClusterNamespacePicker: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const resource = parseResourceSearchParam(searchParams.get("resource"));
-  const meta = resourceMeta(resource);
+  const meta = resourceTabMeta(resource);
   const [q, setQ] = useState("");
 
   const statsQ = useQuery({
     queryKey: ["k8s-namespaces-stats"],
-    queryFn: () => apiGetJson<NamespaceStatsResponse>("/api/k8s/namespace-stats"),
+    queryFn: ({ signal }) => apiGetJson<NamespaceStatsResponse>("/api/k8s/namespace-stats", { signal }),
   });
 
   const itemsWithData = useMemo(() => {
@@ -107,8 +103,9 @@ const ClusterNamespacePicker: React.FC = () => {
       <div>
         <h2 className="text-lg font-semibold text-slate-900">选择命名空间</h2>
         <p className="mt-1 text-sm text-slate-500">
-          请先选择要查看的命名空间；进入后可切换{" "}
-          <span className="font-medium text-slate-700">{meta.title}</span> 与同命名空间下的其他工作负载资源。
+          进入命名空间后，左侧依次为 Pod、工作负载、网络（Service / Ingress）与配置等；侧栏「Pods」为全集群 Pod 列表（不区分命名空间）。
+          当前将打开{" "}
+          <span className="font-medium text-slate-700">{meta.title}</span>。
         </p>
         <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-sm text-slate-700">
           <p className="font-medium text-blue-900">即将打开的资源类型</p>
@@ -165,64 +162,78 @@ const ClusterNamespacePicker: React.FC = () => {
       )}
 
       {filtered.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm">
-          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-5 py-3">
-            <p className="text-sm font-semibold text-slate-800">集群命名空间</p>
-            <p className="text-xs text-slate-500">
+        <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]">
+          <div className="flex flex-col gap-1 border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              命名空间列表
+            </span>
+            <span className="text-xs text-slate-500">
               共 {filtered.length} 个
               {q.trim()
-                ? `（在 ${itemsWithData.length} 个有资源的命名空间中筛选）`
+                ? ` · 在 ${itemsWithData.length} 个有资源的 NS 中筛选`
                 : hiddenEmptyCount > 0
-                  ? `（已隐藏 ${hiddenEmptyCount} 个五类资源数量均为 0 的命名空间）`
+                  ? ` · 已隐藏 ${hiddenEmptyCount} 个空命名空间`
                   : ""}
-              · Pod / Deployment / StatefulSet / Service / PVC 为命名空间内数量；时间为 metadata.creationTimestamp
-            </p>
+            </span>
           </div>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-100 hover:bg-transparent">
-                  <TableHead className="min-w-[140px] whitespace-nowrap pl-5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="min-w-[200px] pl-5 text-xs font-semibold text-slate-500">
                     命名空间
                   </TableHead>
-                  <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="w-[72px] text-right text-xs font-semibold text-slate-500">
                     Pod
                   </TableHead>
-                  <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="w-[72px] text-right text-xs font-semibold text-slate-500">
                     Deployment
                   </TableHead>
-                  <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="w-[72px] text-right text-xs font-semibold text-slate-500">
                     StatefulSet
                   </TableHead>
-                  <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="w-[72px] text-right text-xs font-semibold text-slate-500">
                     Service
                   </TableHead>
-                  <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="w-[72px] text-right text-xs font-semibold text-slate-500">
                     PVC
                   </TableHead>
-                  <TableHead className="min-w-[160px] text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="min-w-[160px] text-xs font-semibold text-slate-500">
                     NS 创建时间
                   </TableHead>
-                  <TableHead className="min-w-[160px] pr-5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <TableHead className="min-w-[160px] pr-5 text-xs font-semibold text-slate-500">
                     最新对象创建
-                    <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
-                      （NS 与上述五类资源中最新 metadata.creationTimestamp）
-                    </span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((row) => (
+                {filtered.map((row, idx) => (
                   <TableRow
                     key={row.namespace}
-                    className="cursor-pointer border-slate-100 transition-colors hover:bg-slate-50/90"
+                    className={cn(
+                      "group cursor-pointer border-slate-100 transition-colors hover:bg-emerald-50/50",
+                      idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"
+                    )}
                     onClick={() => go(row.namespace)}
                   >
-                    <TableCell className="pl-5 align-middle">
-                      <span className="inline-flex items-center gap-2 font-mono text-sm font-medium text-slate-800">
-                        <FolderOpen className="h-4 w-4 shrink-0 text-slate-400" />
-                        {row.namespace}
-                      </span>
+                    <TableCell className="py-3.5 pl-5 align-middle">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50/90 text-emerald-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] ring-1 ring-emerald-200/70 transition-colors group-hover:from-emerald-100 group-hover:to-teal-100 group-hover:text-emerald-800 group-hover:ring-emerald-300/60"
+                          aria-hidden
+                        >
+                          <FolderTree className="h-[18px] w-[18px]" strokeWidth={2.25} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-1 font-mono text-[13px] font-semibold text-slate-900 group-hover:text-emerald-800">
+                            {row.namespace}
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70" />
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] font-medium tracking-wide text-emerald-700/80">
+                            Namespace
+                          </span>
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell className="text-right align-middle tabular-nums text-sm text-slate-800">
                       {row.podCount}
@@ -243,10 +254,7 @@ const ClusterNamespacePicker: React.FC = () => {
                       {formatDateTime(row.namespaceCreated)}
                     </TableCell>
                     <TableCell className="pr-5 align-middle text-xs text-slate-600">
-                      <span className="flex items-center justify-between gap-2">
-                        {formatDateTime(row.latestObjectCreated)}
-                        <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
-                      </span>
+                      {formatDateTime(row.latestObjectCreated)}
                     </TableCell>
                   </TableRow>
                 ))}

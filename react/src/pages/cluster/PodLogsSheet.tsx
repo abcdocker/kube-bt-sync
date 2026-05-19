@@ -17,7 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { AnsiUp } from "ansi_up";
 import { apiGetText } from "@/lib/api";
+import { buildPodLogsApiPath } from "./podLogsApi";
 
 export type PodLogsSheetProps = {
   open: boolean;
@@ -28,21 +30,9 @@ export type PodLogsSheetProps = {
   container: string;
   /** 多容器时用于切换；不传则仅显示单一容器 */
   containerOptions?: { name: string; init?: boolean }[];
+  /** 打开弹窗时是否默认勾选「上次崩溃实例」（等价 kubectl logs --previous） */
+  initialPrevious?: boolean;
 };
-
-function logsPath(
-  namespace: string,
-  podName: string,
-  container: string,
-  tailLines: number,
-  previous: boolean
-) {
-  const q = new URLSearchParams({ tailLines: String(tailLines) });
-  const c = container.trim();
-  if (c) q.set("container", c);
-  if (previous) q.set("previous", "true");
-  return `/api/k8s/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}/logs?${q.toString()}`;
-}
 
 const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
   open,
@@ -51,6 +41,7 @@ const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
   podName,
   container,
   containerOptions,
+  initialPrevious = false,
 }) => {
   const [activeContainer, setActiveContainer] = useState(
     () =>
@@ -63,6 +54,17 @@ const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const ansiUp = useMemo(() => {
+    const a = new AnsiUp();
+    a.escape_html = true;
+    return a;
+  }, []);
+
+  const logHtml = useMemo(() => {
+    if (!text) return "";
+    return ansiUp.ansi_to_html(text);
+  }, [text, ansiUp]);
 
   const resolvedContainer = useMemo(() => {
     const a = activeContainer.trim();
@@ -78,14 +80,15 @@ const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
       containerOptions?.[0]?.name?.trim() ||
       "";
     setActiveContainer(next);
-  }, [open, namespace, podName, container, containerOptions]);
+    setPrevious(Boolean(initialPrevious));
+  }, [open, namespace, podName, container, containerOptions, initialPrevious]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
       const body = await apiGetText(
-        logsPath(namespace, podName, resolvedContainer, tailLines, previous)
+        buildPodLogsApiPath(namespace, podName, resolvedContainer, tailLines, previous)
       );
       setText(body);
     } catch (e) {
@@ -160,7 +163,7 @@ const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
               onCheckedChange={setPrevious}
             />
             <Label htmlFor="podlog-prev" className="cursor-pointer text-xs text-gray-700">
-              上次崩溃实例
+              上轮实例（--previous）
             </Label>
           </div>
           <Button
@@ -192,9 +195,11 @@ const PodLogsSheet: React.FC<PodLogsSheetProps> = ({
               <p className="whitespace-pre-wrap font-mono text-sm text-red-400">{err}</p>
             )}
             {text !== "" && (
-              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-100 [tab-size:2]">
-                {text}
-              </pre>
+              <pre
+                className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-100 [tab-size:2]"
+                // ansi_up 已对非 ANSI 文本做 HTML 转义；此处将 \x1b[38;5;n m 等转为带 style 的 span
+                dangerouslySetInnerHTML={{ __html: logHtml }}
+              />
             )}
             {!loading && !err && text === "" && (
               <p className="text-sm text-slate-500">暂无日志输出</p>
