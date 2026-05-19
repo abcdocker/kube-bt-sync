@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
@@ -30,7 +31,8 @@ func getVCenterVMObject(c *gin.Context, vc *vCenterClient) (*object.VirtualMachi
 	return vm, ctx, nil
 }
 
-func handleVCenterVMPower(c *gin.Context, vc *vCenterClient) {
+func handleVCenterVMPower(c *gin.Context, app *ServerApp) {
+	vc := app.VCenter()
 	vm, ctx, err := getVCenterVMObject(c, vc)
 	if err != nil {
 		if err.Error() == "vCenter 未配置" {
@@ -98,6 +100,9 @@ func handleVCenterVMPower(c *gin.Context, vc *vCenterClient) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
 		}
+		moref := strings.TrimSpace(c.Param("moref"))
+		SetAuditDetail(c, fmt.Sprintf("虚拟机 %s 电源：%s（客户机 API）", moref, guestOnly))
+		vcenterInvalidateVMCaches(c.Request.Context(), app, moref)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "action": guestOnly})
 		return
 	}
@@ -107,6 +112,8 @@ func handleVCenterVMPower(c *gin.Context, vc *vCenterClient) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	moref := strings.TrimSpace(c.Param("moref"))
+	SetAuditDetail(c, fmt.Sprintf("虚拟机 %s 电源：%s（taskId=%s）", moref, action, task.Reference().Value))
 	c.JSON(http.StatusOK, gin.H{
 		"ok":     true,
 		"action": action,
@@ -125,15 +132,13 @@ func handleVCenterTaskStatus(c *gin.Context, vc *vCenterClient) {
 		return
 	}
 	ctx := c.Request.Context()
-	client, err := vc.getClient(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	ref := types.ManagedObjectReference{Type: "Task", Value: taskID}
-	t := object.NewTask(client.Client, ref)
 	var m mo.Task
-	if err := t.Properties(ctx, t.Reference(), []string{"info"}, &m); err != nil {
+	err := vc.WithClientRetry(ctx, func(client *govmomi.Client) error {
+		ref := types.ManagedObjectReference{Type: "Task", Value: taskID}
+		taskObj := object.NewTask(client.Client, ref)
+		return taskObj.Properties(ctx, taskObj.Reference(), []string{"info"}, &m)
+	})
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在或已过期: " + err.Error()})
 		return
 	}
@@ -155,7 +160,8 @@ func handleVCenterTaskStatus(c *gin.Context, vc *vCenterClient) {
 	c.JSON(http.StatusOK, out)
 }
 
-func handleVCenterVMHardware(c *gin.Context, vc *vCenterClient) {
+func handleVCenterVMHardware(c *gin.Context, app *ServerApp) {
+	vc := app.VCenter()
 	vm, ctx, err := getVCenterVMObject(c, vc)
 	if err != nil {
 		if err.Error() == "vCenter 未配置" {
@@ -212,10 +218,20 @@ func handleVCenterVMHardware(c *gin.Context, vc *vCenterClient) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	moref := strings.TrimSpace(c.Param("moref"))
+	var parts []string
+	if body.NumCPU != nil {
+		parts = append(parts, fmt.Sprintf("CPU=%d", *body.NumCPU))
+	}
+	if body.MemoryMB != nil {
+		parts = append(parts, fmt.Sprintf("内存=%d MiB", *body.MemoryMB))
+	}
+	SetAuditDetail(c, fmt.Sprintf("虚拟机 %s 调整硬件：%s", moref, strings.Join(parts, "，")))
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-func handleVCenterVMDiskExpand(c *gin.Context, vc *vCenterClient) {
+func handleVCenterVMDiskExpand(c *gin.Context, app *ServerApp) {
+	vc := app.VCenter()
 	vm, ctx, err := getVCenterVMObject(c, vc)
 	if err != nil {
 		if err.Error() == "vCenter 未配置" {
@@ -298,5 +314,8 @@ func handleVCenterVMDiskExpand(c *gin.Context, vc *vCenterClient) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	moref := strings.TrimSpace(c.Param("moref"))
+	SetAuditDetail(c, fmt.Sprintf("虚拟机 %s 磁盘扩容 deviceKey=%d → %.2f GiB", moref, body.DeviceKey, body.TotalGiB))
+	vcenterInvalidateVMCaches(c.Request.Context(), app, moref)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "capacityKB": newKB})
 }

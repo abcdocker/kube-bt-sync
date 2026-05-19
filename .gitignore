@@ -1,10 +1,65 @@
-kube-bt-sync
+# 编译产物
+/kube-bt-sync
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 测试产物
+*.test
+*.out
+coverage.html
+coverage.out
+
+# 本地数据目录（运行时生成，含敏感配置，切勿提交）
+data/
+!data/.gitkeep
+
+# 本地生成：CDN 静态包（见 scripts/export-cmdb-cdn-assets.sh）
+third_party/cmdb-export/
+
+# 本地若曾克隆上游堡垒机参考实现，勿提交
+third_party/orion-visor/
+
+# IDE
 .idea/
 .vscode/
-<<<<<<< HEAD
-=======
-main
-kube-bt-sync
-mac
-*.exe
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.react/
+react/dist/
+!react/dist/.gitkeep
+
+# Vite / 构建缓存
+.vite/
+*.local
+.env.local
+.env.*.local
+
+# Go
+go.work
+go.work.sum
+vendor/
+
+# Helm
+*.tgz
+charts/*/charts/
+
+# 密钥与证书（保险起见）
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

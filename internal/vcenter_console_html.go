@@ -112,20 +112,23 @@ func buildVCenterWebConsoleURL(ctx context.Context, client *govmomi.Client, vm *
 	return out.String(), vsphereClientURL, nil
 }
 
-func handleVCenterVMConsoleHTMLURL(c *gin.Context, vc *vCenterClient, cfg Config) {
+func handleVCenterVMConsoleHTMLURL(c *gin.Context, vc *vCenterClient, cfg Config, app *ServerApp) {
 	if !vc.cfg.vCenterConfigured() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "vCenter 未配置"})
 		return
 	}
 	moref := strings.TrimSpace(c.Param("moref"))
-	ctx := c.Request.Context()
-	client, err := vc.getClient(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+	if vcenterBastionAbortIfForbidden(c, app, moref) {
 		return
 	}
-	vm := object.NewVirtualMachine(client.Client, types.ManagedObjectReference{Type: "VirtualMachine", Value: moref})
-	urlStr, clientURL, err := buildVCenterWebConsoleURL(ctx, client, vm, cfg)
+	ctx := c.Request.Context()
+	var urlStr, clientURL string
+	err := vc.WithClientRetry(ctx, func(client *govmomi.Client) error {
+		vm := object.NewVirtualMachine(client.Client, types.ManagedObjectReference{Type: "VirtualMachine", Value: moref})
+		var e error
+		urlStr, clientURL, e = buildVCenterWebConsoleURL(ctx, client, vm, cfg)
+		return e
+	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

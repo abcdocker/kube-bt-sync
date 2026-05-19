@@ -85,7 +85,7 @@ func isBenignBaotaDeleteErr(err error) bool {
 // removeBaotaProxy 删除本站下由 kube-bt-sync 创建的反代；失败不阻塞删站点（面板版本参数不一）。
 func removeBaotaProxy(cfg Config, domain string) {
 	pname := ProxyNameForDomain(domain)
-	_, err := CallBaotaAPI(cfg, "/proxy?action=RemoveProxy", map[string]string{
+	_, err := CallBaotaAPI(cfg, "/site?action=RemoveProxy", map[string]string{
 		"sitename":  domain,
 		"proxyname": pname,
 	})
@@ -93,13 +93,20 @@ func removeBaotaProxy(cfg Config, domain string) {
 		return
 	}
 	_, err2 := CallBaotaAPI(cfg, "/proxy?action=RemoveProxy", map[string]string{
-		"proxysite": domain,
+		"sitename":  domain,
 		"proxyname": pname,
 	})
 	if err2 == nil || isBenignBaotaDeleteErr(err2) {
 		return
 	}
-	log.Printf("[%s] RemoveProxy 跳过（继续删站点）: %v; %v", domain, err, err2)
+	_, err3 := CallBaotaAPI(cfg, "/proxy?action=RemoveProxy", map[string]string{
+		"proxysite": domain,
+		"proxyname": pname,
+	})
+	if err3 == nil || isBenignBaotaDeleteErr(err3) {
+		return
+	}
+	log.Printf("[%s] RemoveProxy 跳过（继续删站点）: %v; %v; %v", domain, err, err2, err3)
 }
 
 // DeleteBaotaSiteAndProxy 先删反代再按 id 删站点（与官方 API 一致）。

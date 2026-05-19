@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,15 +20,18 @@ type ServerApp struct {
 
 	dataDir string
 
-	cfg       Config
-	k8s       *kubernetes.Clientset
-	k8sREST   *rest.Config
-	sshStore  SSHSettingsStore
-	vc        *vCenterClient
-	redis     *RedisLight
-	platformKV *PlatformKVFile
+	cfg         Config
+	k8s         *kubernetes.Clientset
+	k8sREST     *rest.Config
+	sshStore    SSHSettingsStore
+	vc          *vCenterClient
+	redis       *RedisLight
+	redisDialErr     string // 已配置 Redis 地址但拨号失败时的原因（供 /api/config 展示）
+	mysqlDB          *sql.DB
+	mysqlConnectErr  string // 最近一次 Reload 时 DSN 非空但 open 失败的原因（供 /api/auth/status 展示）
+	platformKV       PlatformKV
 	initialized bool
-	runtime   *RuntimeSettings
+	runtime     *RuntimeSettings
 }
 
 // DataDirFromEnv 仅数据目录可走环境变量（K8s 挂载 PVC 时常用 KUBEBT_DATA_DIR=/data）。
@@ -58,10 +62,37 @@ func NewServerApp(dataDir string) (*ServerApp, error) {
 	return s, nil
 }
 
+// wirePlatformKVRedisDualWrite：RuntimeDualWriteRedis 下本地快照为空时从 Redis 恢复，再镜像当前快照到 Redis。
+func wirePlatformKVRedisDualWrite(ctx context.Context, kv PlatformKV, redis *RedisLight, cfg Config, persistKind string) {
+	if redis == nil || !cfg.RuntimeDualWriteRedis {
+		return
+	}
+	if len(kv.Snapshot()) == 0 {
+		if m, err := LoadPlatformKVFromRedis(ctx, redis, cfg); err != nil {
+			log.Printf("Redis 读取 platform_kv 备份: %v", err)
+		} else if m != nil && len(m) > 0 {
+			log.Printf("持久化: 从 Redis 恢复 platform_kv 到 %s", persistKind)
+			for k, v := range m {
+				if err := kv.Set(k, v); err != nil {
+					log.Printf("警告: 恢复 platform_kv[%s] 失败: %v", k, err)
+				}
+			}
+		}
+	}
+	if err := MirrorPlatformKVToRedis(ctx, redis, cfg, kv.Snapshot()); err != nil {
+		log.Printf("警告: platform_kv 镜像到 Redis 失败: %v", err)
+	}
+}
+
 // Reload 重新读盘并替换内存态（POST /api/setup 成功后调用）。
 func (s *ServerApp) Reload() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.mysqlDB != nil {
+		_ = s.mysqlDB.Close()
+		s.mysqlDB = nil
+	}
 
 	path := filepath.Join(s.dataDir, runtimeConfigFileName)
 	rs, err := LoadRuntimeSettings(path)
@@ -74,17 +105,51 @@ func (s *ServerApp) Reload() error {
 
 	preMerge := MergeRuntimeConfig(env, rs, s.dataDir)
 	if (rs == nil || !rs.Initialized) && preMerge.RuntimeDualWriteRedis && strings.TrimSpace(preMerge.RedisAddr) != "" {
-		if rdb, err := dialRedisLight(preMerge); err == nil && rdb != nil {
+		if rdb, err := dialRedisLightWithRetry(preMerge); err == nil && rdb != nil {
 			if rs2, err := LoadRuntimeSettingsFromRedis(ctx, rdb, preMerge); err != nil {
 				log.Printf("Redis 读取 runtime-config 备份: %v", err)
 			} else if rs2 != nil && rs2.Initialized {
 				log.Printf("持久化: 从 Redis 恢复 runtime-config 到本地文件")
 				rs = rs2
-				if err := SaveRuntimeSettings(path, rs); err != nil {
+				if err := SaveRuntimeSettingsUnified(path, nil, rs); err != nil {
 					log.Printf("警告: 将 Redis 配置写回文件失败: %v", err)
 				}
 			}
 			_ = rdb.Close()
+		}
+	}
+
+	cfgPre := MergeRuntimeConfig(env, rs, s.dataDir)
+	var mysqlDB *sql.DB
+	s.mysqlConnectErr = ""
+	if dsn := strings.TrimSpace(cfgPre.MySQLDSN); dsn != "" {
+		db, err := openMySQLPoolWithRetry(dsn)
+		if err != nil {
+			log.Printf("MySQL: %v", err)
+			s.mysqlConnectErr = truncateErrMessage(err.Error(), 400)
+		} else {
+			mysqlDB = db
+			// ensure 逐张建表，单表失败不 return；migrate 补列/补索引后再补建仍缺失的表，最后写 app_schema_version。
+			if err := mysqlEnsureSchema(db); err != nil {
+				log.Printf("MySQL 表结构 (ensure): %v", err)
+			}
+			if err := mysqlMigrateSchema(db); err != nil {
+				log.Printf("MySQL 结构迁移失败: %v", err)
+			}
+			if err := migratePlatformKVFromFileIfMySQLEmpty(db, s.dataDir); err != nil {
+				log.Printf("MySQL 导入 platform_kv: %v", err)
+			}
+			if err := migrateRuntimeFromFileIfMySQLEmpty(db, path); err != nil {
+				log.Printf("MySQL 导入 runtime: %v", err)
+			}
+			if rs2, err := loadRuntimeFromMySQL(db); err != nil {
+				log.Printf("MySQL 读取 runtime: %v", err)
+			} else if rs2 != nil && rs2.Initialized {
+				rs = rs2
+				if err := SaveRuntimeSettings(path, rs); err != nil {
+					log.Printf("警告: MySQL runtime 同步到本地文件失败: %v", err)
+				}
+			}
 		}
 	}
 
@@ -96,7 +161,6 @@ func (s *ServerApp) Reload() error {
 		log.Printf("K8s 初始化: %v", err)
 		k8s, k8sREST = nil, nil
 	}
-	// 初始化向导未填 K8s（none/跳过）时，与本地 kubectl 对齐：尝试 KUBECONFIG 或 Pod 内 in-cluster
 	if k8s == nil && rs != nil && rs.Initialized && K8sRuntimeSkipped(rs) {
 		if cs, cfg2, err2 := TryK8sFromEnv(); err2 == nil {
 			k8s, k8sREST = cs, cfg2
@@ -112,34 +176,40 @@ func (s *ServerApp) Reload() error {
 
 	vc := newVCenterClient(cfg)
 
+	if s.redis != nil {
+		_ = s.redis.Close()
+	}
 	s.redis = nil
-	if rdb, err := dialRedisLight(cfg); err != nil {
+	s.redisDialErr = ""
+	if rdb, err := dialRedisLightWithRetry(cfg); err != nil {
 		log.Printf("Redis 连接: %v", err)
-	} else {
+		s.redisDialErr = truncateErrMessage(err.Error(), 400)
+	} else if rdb != nil {
 		s.redis = rdb
 	}
+
+	s.mysqlDB = mysqlDB
 	s.platformKV = nil
-	if kv, err := newPlatformKVFile(s.dataDir); err != nil {
-		log.Printf("平台 KV 文件: %v", err)
-	} else {
-		s.platformKV = kv
-		if s.redis != nil && cfg.RuntimeDualWriteRedis {
-			if snap := kv.Snapshot(); len(snap) == 0 {
-				if m, err := LoadPlatformKVFromRedis(ctx, s.redis, cfg); err != nil {
-					log.Printf("Redis 读取 platform_kv 备份: %v", err)
-				} else if m != nil && len(m) > 0 {
-					log.Printf("持久化: 从 Redis 恢复 platform_kv 到本地文件")
-					for k, v := range m {
-						if err := kv.Set(k, v); err != nil {
-							log.Printf("警告: 恢复 platform_kv[%s] 失败: %v", k, err)
-						}
-					}
-				}
-			}
-			if err := MirrorPlatformKVToRedis(ctx, s.redis, cfg, kv.Snapshot()); err != nil {
-				log.Printf("警告: platform_kv 镜像到 Redis 失败: %v", err)
-			}
+
+	if mysqlDB != nil {
+		if kv, err := newPlatformKVMySQL(mysqlDB); err != nil {
+			log.Printf("MySQL platform_kv: %v", err)
+		} else {
+			s.platformKV = kv
+			wirePlatformKVRedisDualWrite(ctx, kv, s.redis, cfg, "MySQL")
 		}
+	}
+	if s.platformKV == nil {
+		if kv, err := newPlatformKVFile(s.dataDir); err != nil {
+			log.Printf("平台 KV 文件: %v", err)
+		} else {
+			s.platformKV = kv
+			wirePlatformKVRedisDualWrite(ctx, kv, s.redis, cfg, "本地文件")
+		}
+	}
+
+	if s.platformKV != nil && s.redis != nil {
+		s.platformKV = wrapPlatformKVRedisHot(s.platformKV, s.redis, cfg)
 	}
 
 	if s.redis != nil && cfg.RuntimeDualWriteRedis && rs != nil && rs.Initialized {
@@ -210,8 +280,36 @@ func (s *ServerApp) Redis() *RedisLight {
 	return s.redis
 }
 
-func (s *ServerApp) PlatformKV() *PlatformKVFile {
+// RedisDialError 已配置 Redis 地址但当前进程未连上时返回最近一次拨号错误摘要；否则为空。
+func (s *ServerApp) RedisDialError() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.redisDialErr
+}
+
+// MySQLDB 在配置了 MYSQL_DSN / runtime 中 mysqlDsn 且连接成功时非 nil，用于与 SaveRuntimeSettingsUnified 双写。
+func (s *ServerApp) MySQLDB() *sql.DB {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mysqlDB
+}
+
+// MySQLConnectError 最近一次 Reload 时 DSN 非空但连接失败的原因摘要（供前端区分「未配置」与「连不上」）。
+func (s *ServerApp) MySQLConnectError() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mysqlConnectErr
+}
+
+func (s *ServerApp) PlatformKV() PlatformKV {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.platformKV
+}
+
+func truncateErrMessage(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }

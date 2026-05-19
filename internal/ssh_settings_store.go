@@ -228,7 +228,7 @@ func OpenSSHSettingsStore(cfg Config) (SSHSettingsStore, error) {
 		}
 		return &fileSSHStore{dir: abs}, nil
 	case SSHBackendRedis, SSHBackendMySQL:
-		return nil, fmt.Errorf("Redis/MySQL 存储需添加依赖并编译：请在 go.mod 中加入 github.com/redis/go-redis/v9 或 github.com/go-sql-driver/mysql 后执行 go mod tidy；当前请使用 SSH_SETTINGS_BACKEND=file")
+		return nil, fmt.Errorf("SSH_SETTINGS_BACKEND=redis|mysql 尚未在本发行版中启用；K8s 上请使用 file 并将 SSH_SETTINGS_DIR 放在 PVC 上（如 /data/ssh-settings），并配置 KUBEBT_ENCRYPTION_KEY")
 	default:
 		return nil, fmt.Errorf("不支持的 SSH_SETTINGS_BACKEND: %s", be)
 	}

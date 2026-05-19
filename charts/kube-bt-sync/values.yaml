@@ -1,9 +1,14 @@
 app:
+  # 多副本时：仅 1 个 Pod 保持 performance.enableBackgroundJobs=true，其余副本在 deployment 模板中应覆盖为 false（或用手动多 Deployment）。
   replicaCount: 1
+  performance:
+    # 与 resources.limits.cpu 整核一致，如 "2"；留空则不设置，使用 Go 默认 GOMAXPROCS
+    goMaxProcs: ""
+    enableBackgroundJobs: true
   image:
-    repository: harbor.frps.cn/kube-bt-sync-main/v1.13
+    repository: your-registry/kube-bt-sync
     tag: latest
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
 
   service:
     type: NodePort
@@ -17,7 +22,7 @@ config:
   baotaApiKey: "你的宝塔API_KEY"
   
   # 家庭宽带 DDNS 配置
-  ddnsHost: "home.i4t.com"
+  ddnsHost: "home.example.com"
   defaultPort: "38333"
   httpsPort: "38443"
 

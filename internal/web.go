@@ -2,44 +2,33 @@ package internal
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
 	"encoding/json"
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-<<<<<<< HEAD
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-=======
-	"strings"
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	"time"
 
 	"github.com/gin-gonic/gin"
 	networkingv1 "k8s.io/api/networking/v1"
-<<<<<<< HEAD
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml" // K8s 官方 YAML 库
-=======
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/yaml"
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 )
 
 type YamlRequest struct {
 	YamlContent string `json:"yamlContent" binding:"required"`
+	// SkipWorkloadSchedulingCheck 为 true 时跳过 Deployment/StatefulSet 更新前的调度余量预检（应急用）。
+	SkipWorkloadSchedulingCheck bool `json:"skipWorkloadSchedulingCheck"`
 }
 
-<<<<<<< HEAD
 type DeleteIngressRequest struct {
 	Namespace   string `json:"namespace" binding:"required"`
 	Name        string `json:"name" binding:"required"`
@@ -47,72 +36,221 @@ type DeleteIngressRequest struct {
 	DeleteBaota bool   `json:"deleteBaota"`
 }
 
-func StartWebServer(app *ServerApp) {
+// StartWebServer 阻塞至 ctx 取消（SIGINT/SIGTERM），随后优雅关闭 HTTP 服务。
+func StartWebServer(ctx context.Context, app *ServerApp) {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	cfg := app.Cfg()
+	if cfg.PerformanceMode {
+		gin.SetMode(gin.ReleaseMode)
+		log.Printf("config: KUBEBT_PERFORMANCE_MODE 已启用（Gin release；Redis 可用时 /api/namespaces 缓存约 %d 秒）", cfg.NamespacesCacheTTLSec)
+	}
 	configureGinTrustedProxies(r, cfg)
 	r.Use(auditAccessLogMiddleware(app))
+	// Prometheus 抓取内置指标（缓存命中、控制平面建议严重度等）；无需登录，建议仅集群内网访问。
+	r.GET("/metrics", func(c *gin.Context) {
+		handlePrometheusMetrics(c.Writer, c.Request)
+	})
 
 	// 无需登录：探活、初始化向导、登录态
-	r.GET("/api/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true, "service": "kube-bt-sync"})
-	})
+	r.GET("/api/health", handleHealth(app))
+	// 文档中心：公开预览与附件直链（无需登录）
+	r.GET("/r/*rp", func(c *gin.Context) { HandleDocPublicRoute(c, app) })
+	r.POST("/r/*rp", func(c *gin.Context) { HandleDocPublicRoute(c, app) })
+	r.GET("/d/:token", func(c *gin.Context) { HandleDocPublicMedia(c, app) })
 	r.GET("/api/setup/status", handleSetupStatus(app))
 	r.POST("/api/setup", handleSetupSave(app))
-	r.GET("/api/auth/status", func(c *gin.Context) { handleAuthStatus(c, app.Cfg()) })
+	r.GET("/api/auth/status", func(c *gin.Context) { handleAuthStatus(c, app) })
+	r.GET("/api/auth/login-challenge", handleAuthLoginChallenge(app))
+	r.GET("/api/login/public-status", handleLoginPublicStatus(app))
 	r.POST("/api/auth/login", func(c *gin.Context) { handleAuthLogin(c, app) })
+	r.POST("/api/auth/login-totp", handleAuthLoginTotp(app))
+	r.GET("/api/auth/totp/setup-provision", handleTotpSetupProvision(app))
+	r.POST("/api/auth/totp/setup-verify", handleTotpSetupVerify(app))
 	r.POST("/api/auth/logout", func(c *gin.Context) { handleAuthLogout(c, app) })
 	r.GET("/api/auth/oidc/login", handleOIDCLogin(app))
 	r.GET("/api/auth/oidc/callback", handleOIDCCallback(app))
-	log.Println("Dashboard: GET /api/health、/api/setup/status、/api/auth/status、OIDC /api/auth/oidc/* 无需登录；未初始化时 POST /api/setup")
+	log.Println("Dashboard: GET /api/health、/api/setup/status、/api/auth/status、/api/login/public-status、OIDC /api/auth/oidc/* 无需登录；未初始化时 POST /api/setup")
+
+	// Alertmanager → 平台告警中心（凭 query token，无需登录）
+	r.POST("/api/hooks/alertmanager", handleAlertmanagerWebhook(app))
 
 	api := r.Group("/api")
 	api.Use(DashboardAuthMiddleware(app))
+	api.Use(ViewerRestrictionsMiddleware(app))
+	api.Use(apiResponseCacheMiddleware(app))
 	{
 		api.GET("/config", func(c *gin.Context) { handleGetConfig(c, app) })
-		api.GET("/system/check", func(c *gin.Context) { handleSystemCheck(c, app.K8s(), app.Cfg()) })
-		api.GET("/namespaces", func(c *gin.Context) { handleGetNamespaces(c, app.K8s()) })
+		api.GET("/runtime/status", func(c *gin.Context) { handleGetRuntimeStatus(c, app) })
+		api.GET("/system/check", func(c *gin.Context) { handleSystemCheck(c, app) })
+		api.GET("/namespaces", func(c *gin.Context) { handleGetNamespaces(c, app) })
 		api.GET("/services", func(c *gin.Context) { handleGetServices(c, app.K8s()) })
-		api.GET("/ingresses", func(c *gin.Context) { handleListAllIngresses(c, app.K8s()) })
+		api.GET("/ingresses", func(c *gin.Context) { handleListAllIngresses(c, app.K8s(), app.Cfg()) })
 		api.GET("/status", func(c *gin.Context) { handleGetStatus(c, app.K8s(), app.Cfg()) })
 		api.GET("/ingress/raw", func(c *gin.Context) { handleGetIngressRaw(c, app.K8s()) })
 		api.POST("/ingress/yaml", func(c *gin.Context) { handleApplyYaml(c, app.K8s()) })
 		api.POST("/ingress/delete", func(c *gin.Context) { handleDeleteIngress(c, app.K8s(), app.Cfg()) })
+		api.GET("/baota/ingress-sync/status", func(c *gin.Context) { handleBaotaIngressSyncStatus(app)(c) })
+		api.POST("/baota/ingress-sync/run", func(c *gin.Context) { handleBaotaIngressSyncRun(app)(c) })
 
 		api.GET("/k8s/summary", func(c *gin.Context) { handleK8sSummary(c, app.K8s()) })
+		// 静态 /k8s/* 须在带 :namespace/:name 的动态路由之前注册，避免部分环境下误匹配导致 404「not found」。
+		api.GET("/k8s/rbac/service-accounts/:namespace/:name", func(c *gin.Context) {
+			handleK8sRBACServiceAccountDetail(c, app.K8s())
+		})
+		api.GET("/k8s/rbac", func(c *gin.Context) { handleK8sRBACOverview(c, app.K8s()) })
+		api.POST("/k8s/rbac/global-read-user", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sRBACGlobalReadUserCreate(c, app.K8s(), app.K8sREST())
+		})
+		api.POST("/k8s/rbac/quick-readonly-user", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sRBACQuickReadonlyUserCreate(c, app.K8s(), app.K8sREST())
+		})
+		// CRD / 自定义资源：较长路径须在 :crdName 单段路由之前注册
+		api.POST("/k8s/crds/:crdName/instances", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sCustomResourceCreate(c, app.K8s(), app.K8sREST())
+		})
+		api.GET("/k8s/crds/:crdName/instances/:namespace/:objName", func(c *gin.Context) {
+			handleK8sCustomResourceGet(c, app.K8s(), app.K8sREST())
+		})
+		api.PUT("/k8s/crds/:crdName/instances/:namespace/:objName", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sCustomResourceUpdate(c, app.K8s(), app.K8sREST())
+		})
+		api.DELETE("/k8s/crds/:crdName/instances/:namespace/:objName", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sCustomResourceDelete(c, app.K8s(), app.K8sREST())
+		})
+		api.GET("/k8s/crds/:crdName/instances", func(c *gin.Context) {
+			handleK8sCustomResourceList(c, app.K8s(), app.K8sREST())
+		})
+		api.DELETE("/k8s/crds/:crdName", AdminOnlyMiddleware(app), func(c *gin.Context) {
+			handleK8sCRDDelete(c, app.K8s(), app.K8sREST())
+		})
+		api.GET("/k8s/crds", func(c *gin.Context) { handleK8sCRDList(c, app.K8s(), app.K8sREST()) })
+		api.GET("/k8s/crds/:crdName", func(c *gin.Context) { handleK8sCRDGet(c, app.K8s(), app.K8sREST()) })
+		api.GET("/k8s/nodes", func(c *gin.Context) { handleK8sNodes(c, app) })
+		api.GET("/harbor/status", func(c *gin.Context) { handleHarborStatus(app)(c) })
+		api.GET("/harbor/statistics", func(c *gin.Context) { handleHarborStatistics(app)(c) })
+		api.GET("/harbor/projects", func(c *gin.Context) { handleHarborProjects(app)(c) })
+		api.GET("/harbor/projects/:project/repositories", func(c *gin.Context) { handleHarborRepositories(app)(c) })
+		api.GET("/harbor/index/status", func(c *gin.Context) { handleHarborIndexStatus(app)(c) })
+		api.POST("/harbor/index/sync", AdminOnlyMiddleware(app), func(c *gin.Context) { handleHarborIndexSync(app)(c) })
+		api.GET("/harbor/index/search", func(c *gin.Context) { handleHarborIndexSearch(app)(c) })
+		// 制品列表/删除：仓库名用 query repository（可含 /），避免 Gin 要求 catch-all 必须在路径末尾的限制
+		api.GET("/harbor/projects/:project/artifacts", func(c *gin.Context) { handleHarborArtifacts(app)(c) })
+		api.GET("/harbor/projects/:project/artifact-additions", func(c *gin.Context) { handleHarborArtifactAddition(app)(c) })
+		api.DELETE("/harbor/projects/:project/artifacts", AdminOnlyMiddleware(app), func(c *gin.Context) { handleHarborDeleteArtifact(app)(c) })
+		api.GET("/k8s/namespaces/stats", func(c *gin.Context) { handleK8sNamespaceStats(c, app.K8s()) })
+		api.GET("/k8s/namespace-stats", func(c *gin.Context) { handleK8sNamespaceStats(c, app.K8s()) })
+		api.GET("/k8s/pods/metrics", func(c *gin.Context) { handleK8sPodsMetrics(c, app.Cfg()) })
+		api.GET("/k8s/pods/resource-efficiency", func(c *gin.Context) {
+			handleK8sPodsResourceEfficiency(c, app.K8s(), app.Cfg())
+		})
+		api.GET("/k8s/prometheus/cluster-charts", func(c *gin.Context) { handleGetK8sKubeSphereCharts(c, app) })
+		api.GET("/k8s/prometheus/cluster-snapshot", func(c *gin.Context) { handleGetK8sKubeSphereSnapshot(c, app) })
+		api.GET("/k8s/prometheus/pod-network-top", func(c *gin.Context) { handleGetK8sPodNetworkTop(c, app) })
+		api.GET("/k8s/etcd/summary", func(c *gin.Context) { handleGetK8sEtcdSummary(c, app) })
+		api.POST("/k8s/etcd/defrag-job", AdminOnlyMiddleware(app), func(c *gin.Context) { handlePostK8sEtcdDefragJob(c, app) })
+		api.POST("/k8s/etcd/defrag-job-yaml", AdminOnlyMiddleware(app), func(c *gin.Context) { handlePostK8sEtcdDefragJobYAML(c, app) })
+		// 兼容旧路径
+		api.GET("/k8s/prometheus/kubesphere-charts", func(c *gin.Context) { handleGetK8sKubeSphereCharts(c, app) })
+		api.GET("/k8s/prometheus/kubesphere-snapshot", func(c *gin.Context) { handleGetK8sKubeSphereSnapshot(c, app) })
 		api.GET("/k8s/pods/:namespace/:name/exec/ws", func(c *gin.Context) { handleK8sPodExecWS(c, app.K8s(), app.K8sREST()) })
 		api.GET("/k8s/pods/:namespace/:name/logs", func(c *gin.Context) { handleK8sPodLogs(c, app.K8s()) })
 		api.GET("/k8s/pods/:namespace/:name", func(c *gin.Context) { handleK8sPodGet(c, app.K8s()) })
 		api.DELETE("/k8s/pods/:namespace/:name", func(c *gin.Context) { handleK8sPodDelete(c, app.K8s()) })
+		api.GET("/k8s/pod-restarts", func(c *gin.Context) { handleK8sPodRestarts(c, app.K8s()) })
+		api.GET("/k8s/pod-restart-insights", func(c *gin.Context) { handleK8sPodRestartInsights(c, app.K8s()) })
+		api.GET("/k8s/pod-restart-ai/reports", func(c *gin.Context) { handleK8sPodRestartAIReportsList(c, app) })
+		api.DELETE("/k8s/pod-restart-ai/reports/:id", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sPodRestartAIReportDelete(c, app) })
+		api.POST("/k8s/pod-restart-ai/reports", func(c *gin.Context) { handleK8sPodRestartAIReportSave(c, app) })
+		api.GET("/k8s/pod-restart-ai/correlation-latest", func(c *gin.Context) { handleK8sPodRestartAICorrelationLatest(c, app) })
+		api.GET("/k8s/pod-restart-ai/rollup-summary", func(c *gin.Context) { handleK8sPodRestartAIRollupSummary(c, app) })
+		api.GET("/k8s/workloads/resource-advisory", func(c *gin.Context) {
+			handleK8sWorkloadsResourceAdvisory(c, app.K8s(), app.Cfg())
+		})
+		api.POST("/k8s/workloads/scheduling-check", func(c *gin.Context) { handleK8sWorkloadSchedulingCheck(c, app.K8s()) })
+		api.POST("/k8s/workloads/scheduling-check-yaml", func(c *gin.Context) { handleK8sWorkloadSchedulingCheckYAML(c, app.K8s()) })
+		api.POST("/k8s/workloads/patch-container-resources", func(c *gin.Context) {
+			handleK8sWorkloadPatchContainerResources(c, app)
+		})
 		api.GET("/k8s/pods", func(c *gin.Context) { handleK8sPods(c, app.K8s()) })
 		api.GET("/k8s/services", func(c *gin.Context) { handleK8sServices(c, app.K8s()) })
+		api.GET("/k8s/ingresses", func(c *gin.Context) { handleK8sIngresses(c, app.K8s()) })
+		api.GET("/k8s/addons/status", func(c *gin.Context) { handleK8sAddonsStatus(c, app) })
+		api.GET("/k8s/addons/ingress-nginx/verify", func(c *gin.Context) { handleK8sAddonsIngressVerify(c, app) })
+		api.POST("/k8s/addons/ingress-nginx/install", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsIngressNginxInstall(c, app) })
+		api.POST("/k8s/addons/ingress-nginx/uninstall", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsIngressNginxUninstall(c, app) })
+		api.POST("/k8s/addons/ingress-nginx/host-ports", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsIngressHostPorts(c, app) })
+		api.POST("/k8s/addons/ingress-nginx/controller-node", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsIngressControllerNode(c, app) })
+		api.GET("/k8s/addons/dashboard-monitoring/verify", func(c *gin.Context) { handleK8sAddonsDashboardMonitoringVerify(c, app) })
+		api.POST("/k8s/addons/dashboard-monitoring/install", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsDashboardMonitoringInstall(c, app) })
+		api.GET("/k8s/addons/kube-prometheus-stack/verify", func(c *gin.Context) { handleK8sAddonsKubePrometheusStackVerify(c, app) })
+		api.POST("/k8s/addons/kube-prometheus-stack/install", AdminOnlyMiddleware(app), func(c *gin.Context) { handleK8sAddonsKubePrometheusStackInstall(c, app) })
+		api.GET("/k8s/resource-relations", func(c *gin.Context) { handleK8sResourceRelations(c, app.K8s()) })
 		api.GET("/k8s/deployments", func(c *gin.Context) { handleK8sDeployments(c, app.K8s()) })
+		api.POST("/k8s/deployments/:namespace/:name/restart", func(c *gin.Context) { handleK8sDeploymentRolloutRestart(c, app.K8s()) })
 		api.GET("/k8s/statefulsets", func(c *gin.Context) { handleK8sStatefulSets(c, app.K8s()) })
 		api.GET("/k8s/daemonsets", func(c *gin.Context) { handleK8sDaemonSets(c, app.K8s()) })
 		api.GET("/k8s/pvcs", func(c *gin.Context) { handleK8sPVCs(c, app.K8s()) })
+		api.POST("/k8s/pvcs/:namespace/:name/expand", func(c *gin.Context) { handleK8sPVCExpand(c, app.K8s()) })
+		api.GET("/k8s/pvc-files/:namespace/:pvcName/mounts", func(c *gin.Context) { handleK8sPVCFileMounts(c, app.K8s()) })
+		api.GET("/k8s/pvc-files/:namespace/:pvcName/list", func(c *gin.Context) { handleK8sPVCFileList(c, app.K8s(), app.K8sREST()) })
+		api.GET("/k8s/pvc-files/:namespace/:pvcName/read", func(c *gin.Context) { handleK8sPVCFileRead(c, app.K8s(), app.K8sREST()) })
+		api.PUT("/k8s/pvc-files/:namespace/:pvcName/write", func(c *gin.Context) { handleK8sPVCFileWrite(c, app.K8s(), app.K8sREST()) })
+		api.POST("/k8s/pvc-files/:namespace/:pvcName/delete", func(c *gin.Context) { handleK8sPVCFileDelete(c, app.K8s(), app.K8sREST()) })
+		api.POST("/k8s/pvc-files/:namespace/:pvcName/mkdir", func(c *gin.Context) { handleK8sPVCFileMkdir(c, app.K8s(), app.K8sREST()) })
+		api.POST("/k8s/pvc-files/:namespace/:pvcName/rename", func(c *gin.Context) { handleK8sPVCFileRename(c, app.K8s(), app.K8sREST()) })
+		api.GET("/k8s/storage-classes", func(c *gin.Context) { handleK8sStorageClasses(c, app.K8s()) })
 		api.GET("/k8s/configmaps", func(c *gin.Context) { handleK8sConfigMaps(c, app.K8s()) })
-		api.GET("/k8s/nodes", func(c *gin.Context) { handleK8sNodes(c, app.K8s()) })
-		api.GET("/k8s/namespaces/stats", func(c *gin.Context) { handleK8sNamespaceStats(c, app.K8s()) })
-		api.GET("/k8s/namespace-stats", func(c *gin.Context) { handleK8sNamespaceStats(c, app.K8s()) })
-		api.POST("/k8s/apply-yaml", func(c *gin.Context) { handleK8sApplyYamlGeneric(c, app.K8s()) })
+		api.GET("/k8s/secrets", func(c *gin.Context) { handleK8sSecrets(c, app.K8s()) })
+		api.POST("/k8s/apply-yaml", func(c *gin.Context) { handleK8sApplyYamlGeneric(c, app) })
 		api.GET("/k8s/object-yaml", func(c *gin.Context) { handleK8sGetObjectYAML(c, app.K8s()) })
+		api.GET("/k8s/object-json", func(c *gin.Context) { handleK8sGetObjectJSON(c, app.K8s()) })
+		api.PUT("/k8s/object-json", func(c *gin.Context) { handleK8sPutObjectJSON(c, app) })
+		api.GET("/k8s/object-revisions", func(c *gin.Context) { handleK8sObjectRevisionsList(c, app) })
+		api.GET("/k8s/object-revisions/yaml", func(c *gin.Context) { handleK8sObjectRevisionYAML(c, app) })
+		api.GET("/k8s/object-revisions/diff", func(c *gin.Context) { handleK8sObjectRevisionDiff(c, app) })
+		api.POST("/k8s/object-revisions/rollback", func(c *gin.Context) { handleK8sObjectRevisionRollback(c, app) })
 		api.DELETE("/k8s/objects/:kind/:namespace/:name", func(c *gin.Context) { handleK8sDeleteObject(c, app.K8s()) })
 
 		api.GET("/settings/runtime", handleGetRuntimeSettings(app))
 		api.PUT("/settings/runtime", handlePutRuntimeSettings(app))
-		api.GET("/audit/logs", handleGetAuditLogs(app))
+		api.GET("/audit/logs", AdminOnlyMiddleware(app), handleGetAuditLogs(app))
+		api.GET("/audit/summary", AdminOnlyMiddleware(app), handleGetAuditSummary(app))
+		api.GET("/audit/site-stats", AdminOnlyMiddleware(app), handleGetSiteStats(app))
+		api.GET("/audit/harbor-dashboard", AdminOnlyMiddleware(app), handleGetHarborAdminDashboard(app))
+		api.GET("/account/oidc/bind/start", handleOIDCBindStart(app))
+		api.GET("/host/egress-notification", handleHostEgressNotification(app))
+		api.POST("/host/egress-notification/read", handleHostEgressNotificationRead(app))
+		api.POST("/host/security-login-alert/read", handleSecurityLoginAlertRead(app))
+		api.POST("/host/remote-login-alert/read", handleRemoteLoginAlertRead(app))
+		api.POST("/host/admin-ip-ban-alert/read", handleAdminIpBanAlertRead(app))
 		api.GET("/prometheus/status", func(c *gin.Context) { handlePrometheusStatus(c, app.Cfg()) })
 		api.GET("/prometheus/discover", func(c *gin.Context) { handlePrometheusDiscover(c, app.K8s()) })
 		api.POST("/prometheus/source", func(c *gin.Context) { handlePrometheusSource(c, app.Cfg()) })
-		api.GET("/prometheus/query", func(c *gin.Context) { handlePrometheusQuery(c, app.Cfg()) })
-		api.GET("/prometheus/query_range", func(c *gin.Context) { handlePrometheusQueryRange(c, app.Cfg()) })
+		api.GET("/prometheus/query", func(c *gin.Context) { handlePrometheusQuery(c, app) })
+		api.POST("/prometheus/query", func(c *gin.Context) { handlePrometheusQuery(c, app) })
+		api.GET("/prometheus/query_range", func(c *gin.Context) { handlePrometheusQueryRange(c, app) })
+		api.POST("/prometheus/query_range", func(c *gin.Context) { handlePrometheusQueryRange(c, app) })
+		api.POST("/prometheus/validate-config-yaml", func(c *gin.Context) { handlePrometheusConfigYAMLValidate(c) })
+		api.GET("/prometheus/vcenter-metrics", func(c *gin.Context) { handleVCenterPrometheusMetrics(c, app) })
 
 		registerVCenterRoutes(api, app)
+		registerCloudHostRoutes(api, app)
+		registerToolboxRoutes(api, app)
+		registerAppCenterRoutes(api, app)
+		registerAppCloudVMRoutes(api, app)
+		registerAdminUserRoutes(api, app)
+		registerAccountProfileRoutes(api, app)
+		registerOpsCenterRoutes(api, app)
+		registerDocsRoutes(api, app)
 	}
-	log.Println("Dashboard: WebSocket /api/k8s/pods/.../exec/ws、/api/vcenter/vms/.../console-ws、/api/vcenter/vms/.../ssh/ws；GET/DELETE pods；GET summary、namespaces/stats、pods、deployments、statefulsets、daemonsets、pvcs、configmaps、services、nodes；GET/POST prometheus；vCenter API")
+	log.Println("Dashboard: WebSocket /api/k8s/pods/.../exec/ws、/api/app-center/redis/instances/:id/redis-cli/ws、/api/vcenter/vms/.../console-ws、/api/vcenter/vms/.../ssh/ws、/api/cloud-hosts/:id/ssh/ws、/api/app-center/redis/runtime/ws；GET/DELETE pods；GET summary、namespaces/stats、pods、deployments、statefulsets、daemonsets、pvcs、configmaps、services、nodes；GET/POST prometheus；vCenter API、cloud-hosts")
 
-	registerFrontendRoutes(r)
+	registerFrontendRoutes(r, app)
+
+	if app.Cfg().EnableBackgroundJobs {
+		StartAuditRetentionPruner(app)
+	}
 
 	addr := strings.TrimSpace(cfg.DashboardListenAddr)
 	if addr == "" {
@@ -122,13 +260,29 @@ func StartWebServer(app *ServerApp) {
 		Addr:              addr,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      2 * time.Minute,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
 	}
 
 	log.Printf("kube-bt-sync Dashboard 已启动，监听 %s", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Web 服务启动失败: %v", err)
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		errCh <- err
+	}()
+	select {
+	case <-ctx.Done():
+		shCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shCtx); err != nil {
+			log.Printf("Dashboard: Shutdown: %v", err)
+		} else {
+			log.Println("Dashboard: HTTP 服务已优雅关闭")
+		}
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Web 服务异常退出: %v", err)
+		}
 	}
 }
 
@@ -165,19 +319,52 @@ func resolveReactDistDir() string {
 	return filepath.Join("react", "dist")
 }
 
-func registerFrontendRoutes(r *gin.Engine) {
+// tryServeFileFromReactDist 若 dist 根目录下存在与 URL 路径对应的文件则直接输出（含 favicon、public 下拷贝的 svg/ico）。
+// 避免 Gin.StaticFile 在「构建产物里缺文件」时固定返回 404、而 SPA 又无法兜底的问题。
+func tryServeFileFromReactDist(c *gin.Context, reactDistDir string) bool {
+	p := c.Request.URL.Path
+	if p == "/" || p == "" {
+		return false
+	}
+	rel := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(p, "/")), "/")
+	if rel == "" || strings.Contains(rel, "..") {
+		return false
+	}
+	full := filepath.Join(reactDistDir, filepath.FromSlash(rel))
+	absDist, err := filepath.Abs(reactDistDir)
+	if err != nil {
+		return false
+	}
+	absFull, err := filepath.Abs(full)
+	if err != nil {
+		return false
+	}
+	relSafe, err := filepath.Rel(absDist, absFull)
+	if err != nil || strings.HasPrefix(relSafe, "..") {
+		return false
+	}
+	fi, err := os.Stat(absFull)
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	c.File(absFull)
+	return true
+}
+
+func registerFrontendRoutes(r *gin.Engine, app *ServerApp) {
 	reactDistDir := resolveReactDistDir()
 	reactIndex := filepath.Join(reactDistDir, "index.html")
 
 	// Prefer the React build output if available.
 	if fileExists(reactIndex) {
 		r.Static("/assets", filepath.Join(reactDistDir, "assets"))
-		r.StaticFile("/favicon.ico", filepath.Join(reactDistDir, "favicon.ico"))
-		r.StaticFile("/vite.svg", filepath.Join(reactDistDir, "vite.svg"))
 		r.GET("/", func(c *gin.Context) { c.File(reactIndex) })
 		r.NoRoute(func(c *gin.Context) {
 			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				c.JSON(http.StatusNotFound, gin.H{"error": "API 不存在或未注册，请确认已部署包含该接口的版本"})
+				return
+			}
+			if tryServeFileFromReactDist(c, reactDistDir) {
 				return
 			}
 			c.File(reactIndex)
@@ -188,9 +375,29 @@ func registerFrontendRoutes(r *gin.Engine) {
 
 	log.Printf("未找到 %s，回退到 templates/index.html；请执行: cd react && npm run build", reactIndex)
 	// Fallback to server-rendered template if React dist not built.
+	fallbackPublic := filepath.Join("react", "public")
+	fallbackFavicon := filepath.Join(fallbackPublic, "favicon.svg")
+	if fileExists(fallbackFavicon) {
+		r.StaticFile("/favicon.svg", fallbackFavicon)
+	}
+	fallbackIco := filepath.Join(fallbackPublic, "favicon.ico")
+	if fileExists(fallbackIco) {
+		r.StaticFile("/favicon.ico", fallbackIco)
+	}
+	fallbackBrand := filepath.Join(fallbackPublic, "brand-logo.svg")
+	if fileExists(fallbackBrand) {
+		r.StaticFile("/brand-logo.svg", fallbackBrand)
+	}
 	r.Delims("[[", "]]")
 	r.LoadHTMLGlob("templates/*")
-	r.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+	r.GET("/", func(c *gin.Context) {
+		a := buildEdgeGatewayAssetFields(app.Cfg())
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"BootstrapCSS":   a.BootstrapCSS,
+			"BootstrapJS":    a.BootstrapJS,
+			"FontAwesomeCSS": a.FontAwesomeCSS,
+		})
+	})
 	log.Println("前端模式: templates/index.html (未检测到 react/dist)")
 }
 
@@ -205,29 +412,21 @@ func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 	}
 	ingresses, err := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 Ingress 失败: " + err.Error()})
+		RespondAPIError500(c, "查询 Ingress 失败: "+err.Error())
 		return
 	}
 	result := make([]map[string]interface{}, 0)
 	for _, ing := range ingresses.Items {
 		if IsManagedIngress(ing.Annotations) {
-			port := cfg.DefaultPort
-			if cp, ok := ing.Annotations["i4t.com/ddns-port"]; ok && cp != "" {
-				port = cp
-			}
+			targetHost, scheme, port := BaotaOriginTarget(cfg, ing.Annotations)
 			domain := "N/A"
 			if len(ing.Spec.Rules) > 0 {
 				domain = ing.Spec.Rules[0].Host
 			}
 
-			scheme := "http"
-			if len(ing.Spec.TLS) > 0 {
-				scheme = "https"
-			}
-
 			result = append(result, map[string]interface{}{
 				"namespace": ing.Namespace, "name": ing.Name, "domain": domain,
-				"ddnsPort": port, "createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
+				"ddnsPort": port, "upstreamHost": targetHost, "createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
 				"modifiedAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
 				"version":    ing.ResourceVersion,
 				"scheme":     scheme,
@@ -261,231 +460,21 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset) {
 	}
 
 	// 2. 与 K8s API 交互 (获取现有的资源版本，以支持 Update)
-=======
-type DeleteRequest struct {
-	Namespace   string `json:"namespace" binding:"required"`
-	Name        string `json:"name" binding:"required"`
-	Domain      string `json:"domain" binding:"required"`
-	DeleteBaota bool   `json:"deleteBaota"`
-}
-
-func StartWebServer(k8sClient *kubernetes.Clientset, cfg Config) {
-	r := gin.Default()
-
-	authUser := os.Getenv("AUTH_USER")
-	authPass := os.Getenv("AUTH_PASSWORD")
-	if authUser != "" && authPass != "" {
-		r.Use(gin.BasicAuth(gin.Accounts{authUser: authPass}))
-		log.Printf("🔒 Web 控制台已开启安全认证")
-	}
-
-	r.Delims("[[", "]]")
-	r.LoadHTMLGlob("templates/*")
-
-	r.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
-
-	api := r.Group("/api")
-	{
-		api.GET("/status", func(c *gin.Context) { handleGetStatus(c, k8sClient, cfg) })
-		api.POST("/ingress/yaml", func(c *gin.Context) { handleApplyYaml(c, k8sClient, cfg) })
-		api.POST("/ingress/delete", func(c *gin.Context) { handleDeleteIngress(c, k8sClient, cfg) })
-		api.GET("/system/check", func(c *gin.Context) { handleSystemCheck(c, k8sClient, cfg) })
-		api.GET("/namespaces", func(c *gin.Context) { handleGetNamespaces(c, k8sClient) })
-		api.GET("/services", func(c *gin.Context) { handleGetServices(c, k8sClient) })
-		api.GET("/ingress/raw", func(c *gin.Context) { handleGetRawIngress(c, k8sClient) })
-	}
-
-	log.Println("kube-bt-sync Dashboard 已启动，监听 :8080")
-	r.Run(":8080")
-}
-
-func handleGetRawIngress(c *gin.Context, k8sClient *kubernetes.Clientset) {
-	ns := c.Query("ns")
-	name := c.Query("name")
-	ing, err := k8sClient.NetworkingV1().Ingresses(ns).Get(context.TODO(), name, metav1.GetOptions{})
-	if err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }
-
-	ing.ManagedFields = nil
-	ing.Status = networkingv1.IngressStatus{}
-	ing.ResourceVersion = ""
-	ing.UID = ""
-	ing.CreationTimestamp = metav1.Time{}
-	ing.Generation = 0
-
-	yamlData, err := yaml.Marshal(ing)
-	if err != nil { c.JSON(500, gin.H{"error": "YAML 转换失败"}); return }
-	c.String(200, string(yamlData))
-}
-
-func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	var req DeleteRequest
-	if err := c.ShouldBindJSON(&req); err != nil { c.JSON(400, gin.H{"error": "参数解析失败"}); return }
-
-	if req.DeleteBaota {
-		resp, err := CallBaotaAPI(cfg, "/data?action=getData", map[string]string{"table": "sites", "search": req.Domain})
-		if err == nil {
-			var siteData struct { Data []struct { Id int `json:"id"`; Name string `json:"name"` } `json:"data"` }
-			if json.Unmarshal([]byte(resp), &siteData) == nil {
-				for _, site := range siteData.Data {
-					if site.Name == req.Domain {
-						CallBaotaAPI(cfg, "/site?action=DeleteSite", map[string]string{"id": fmt.Sprintf("%d", site.Id), "webname": req.Domain})
-						break
-					}
-				}
-			}
-		}
-	}
-
-	err := k8sClient.NetworkingV1().Ingresses(req.Namespace).Delete(context.TODO(), req.Name, metav1.DeleteOptions{})
-	if err != nil { c.JSON(500, gin.H{"error": "删除 K8s Ingress 失败: " + err.Error()}); return }
-	c.JSON(200, gin.H{"message": "路由删除成功！"})
-}
-
-func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	baotaStatus, baotaMsg := "success", "连接成功"
-	resp, err := CallBaotaAPI(cfg, "/system?action=GetSystemTotal", map[string]string{})
-	if err != nil {
-		baotaMsg, baotaStatus = "网络连通失败: "+err.Error(), "error"
-	} else if strings.Contains(resp, "API校验失败") || strings.Contains(resp, "IP不在白名单") {
-		baotaMsg, baotaStatus = "API 密钥错误或未加入白名单", "error"
-	}
-
-	ingressInstalled, metallbInstalled := false, false
-	deployments, _ := k8sClient.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
-	for _, deploy := range deployments.Items {
-		if strings.Contains(deploy.Name, "ingress-nginx") { ingressInstalled = true }
-		if strings.Contains(deploy.Name, "metallb") { metallbInstalled = true }
-	}
-	daemonsets, _ := k8sClient.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
-	for _, ds := range daemonsets.Items {
-		if strings.Contains(ds.Name, "ingress-nginx") { ingressInstalled = true }
-		if strings.Contains(ds.Name, "metallb") { metallbInstalled = true }
-	}
-
-	var nodeIP string
-	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	if err == nil && len(nodes.Items) > 0 {
-		for _, addr := range nodes.Items[0].Status.Addresses {
-			if addr.Type == "InternalIP" { nodeIP = addr.Address; break }
-		}
-	}
-
-	// 🌟 动态获取 HTTPS 端口，默认 443
-	httpsPort := os.Getenv("HTTPS_PORT")
-	if httpsPort == "" {
-		httpsPort = "443"
-	}
-
-	ddnsStatus, ddnsMsg := "error", "未配置 DDNS 域名或解析失败"
-	var resolvedIPs []string
-	cleanDDNS := strings.Split(strings.TrimPrefix(strings.TrimPrefix(cfg.DDNSHost, "http://"), "https://"), ":")[0]
-	port443Status := false 
-
-	if cleanDDNS != "" {
-		ips, err := net.LookupIP(cleanDDNS)
-		if err == nil {
-			for _, ip := range ips { if ipv4 := ip.To4(); ipv4 != nil { resolvedIPs = append(resolvedIPs, ipv4.String()) } }
-			if len(resolvedIPs) > 0 {
-				conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", cleanDDNS, cfg.DefaultPort), 2*time.Second)
-				if dialErr == nil {
-					conn.Close()
-					ddnsStatus, ddnsMsg = "success", fmt.Sprintf("主穿透端口 (%s) 正常", cfg.DefaultPort)
-				} else {
-					ddnsStatus, ddnsMsg = "warning", fmt.Sprintf("解析生效，但 TCP 端口 %s 不通", cfg.DefaultPort)
-				}
-				
-				// 🌟 使用动态获取的 HTTPS 端口进行探活
-				conn443, err443 := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", cleanDDNS, httpsPort), 2*time.Second)
-				if err443 == nil {
-					conn443.Close()
-					port443Status = true
-				}
-			}
-		}
-	}
-
-	c.JSON(200, gin.H{
-		"baota": gin.H{"status": baotaStatus, "msg": baotaMsg, "url": cfg.BaotaURL},
-		"k8s":   gin.H{"ingressInstalled": ingressInstalled, "metallbInstalled": metallbInstalled, "nodeIP": nodeIP},
-		// 🌟 将 httpsPort 传递给前端
-		"ddns":  gin.H{"status": ddnsStatus, "msg": ddnsMsg, "host": cfg.DDNSHost, "ips": resolvedIPs, "port443": port443Status, "httpsPort": httpsPort},
-	})
-}
-
-func handleGetStatus(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	ingresses, _ := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
-	var result []map[string]interface{}
-	for _, ing := range ingresses.Items {
-		if val, ok := ing.Annotations["kube-bt-sync.io/baota-sync"]; ok && val == "true" {
-			port := cfg.DefaultPort
-			if cp, ok := ing.Annotations["kube-bt-sync.io/ddns-port"]; ok && cp != "" { port = cp }
-			domain := "N/A"
-			if len(ing.Spec.Rules) > 0 { domain = ing.Spec.Rules[0].Host }
-
-			scheme := "http"
-			if len(ing.Spec.TLS) > 0 { scheme = "https" }
-
-			modifiedAt := ing.CreationTimestamp.Format("2006-01-02 15:04:05")
-			if mod, ok := ing.Annotations["kube-bt-sync.io/last-modified"]; ok { modifiedAt = mod }
-
-			result = append(result, map[string]interface{}{
-				"namespace": ing.Namespace, "name": ing.Name, "domain": domain,
-				"scheme": scheme, "ddnsPort": port, 
-				"createdAt": ing.CreationTimestamp.Format("2006-01-02 15:04:05"),
-				"modifiedAt": modifiedAt,
-				"version": ing.ResourceVersion,
-				"status": "🟢 已下发 (事件守护中)",
-			})
-		}
-	}
-	c.JSON(200, result)
-}
-
-func handleGetNamespaces(c *gin.Context, k8sClient *kubernetes.Clientset) {
-	nsList, _ := k8sClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
-	var result []string
-	for _, ns := range nsList.Items { result = append(result, ns.Name) }
-	c.JSON(200, result)
-}
-
-func handleGetServices(c *gin.Context, k8sClient *kubernetes.Clientset) {
-	services, _ := k8sClient.CoreV1().Services("").List(context.TODO(), metav1.ListOptions{})
-	var result []map[string]interface{}
-	for _, svc := range services.Items {
-		var ports []int32
-		for _, p := range svc.Spec.Ports { ports = append(ports, p.Port) }
-		ip := svc.Spec.ClusterIP
-		if len(svc.Status.LoadBalancer.Ingress) > 0 { ip = svc.Status.LoadBalancer.Ingress[0].IP }
-		result = append(result, map[string]interface{}{"name": svc.Name, "namespace": svc.Namespace, "ports": ports, "ip": ip})
-	}
-	c.JSON(200, result)
-}
-
-func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
-	var req YamlRequest
-	if err := c.ShouldBindJSON(&req); err != nil { c.JSON(400, gin.H{"error": "参数解析失败"}); return }
-
-	var ingress networkingv1.Ingress
-	if err := yaml.Unmarshal([]byte(req.YamlContent), &ingress); err != nil { c.JSON(400, gin.H{"error": "YAML 格式错误"}); return }
-	if ingress.Namespace == "" { ingress.Namespace = "default" }
-
-	if ingress.Annotations == nil { ingress.Annotations = make(map[string]string) }
-	ingress.Annotations["kube-bt-sync.io/last-modified"] = time.Now().Format("2006-01-02 15:04:05")
-
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 	client := k8sClient.NetworkingV1().Ingresses(ingress.Namespace)
 	existing, err := client.Get(context.TODO(), ingress.Name, metav1.GetOptions{})
 
+	op := ""
 	if err == nil {
-<<<<<<< HEAD
 		// 存在则更新，必须带上旧的 ResourceVersion
 		ingress.ResourceVersion = existing.ResourceVersion
 		_, err = client.Update(context.TODO(), &ingress, metav1.UpdateOptions{})
+		op = "更新"
 	} else if apierrors.IsNotFound(err) {
 		// 不存在则创建
 		_, err = client.Create(context.TODO(), &ingress, metav1.CreateOptions{})
+		op = "创建"
 	} else {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取现有资源失败: " + err.Error()})
+		RespondAPIError500(c, "读取现有资源失败: "+err.Error())
 		return
 	}
 
@@ -494,16 +483,34 @@ func handleApplyYaml(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config
 		return
 	}
 
+	SetAuditDetail(c, op+" Ingress "+ingress.Namespace+"/"+ingress.Name)
 	c.JSON(200, gin.H{"message": "YAML 资源已成功应用到 K8s 集群！"})
 }
 
-func handleGetNamespaces(c *gin.Context, k8sClient *kubernetes.Clientset) {
+func handleGetNamespaces(c *gin.Context, app *ServerApp) {
+	k8sClient := app.K8s()
 	if !GuardK8s(c, k8sClient) {
 		return
 	}
+	cfg := app.Cfg()
+	ctx := c.Request.Context()
+	prefix := strings.TrimSpace(cfg.RedisKeyPrefix)
+	if prefix != "" && !strings.HasSuffix(prefix, ":") {
+		prefix += ":"
+	}
+	cacheKey := prefix + "cache:k8s:namespaces:v1"
+	if app.Redis() != nil && cfg.PerformanceMode && cfg.NamespacesCacheTTLSec > 0 {
+		if raw, err := app.Redis().Get(ctx, cacheKey); err == nil && raw != "" {
+			var cached []string
+			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
+				c.JSON(http.StatusOK, cached)
+				return
+			}
+		}
+	}
 	namespaces, err := k8sClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询命名空间失败: " + err.Error()})
+		RespondAPIError500(c, "查询命名空间失败: "+err.Error())
 		return
 	}
 	items := make([]string, 0, len(namespaces.Items))
@@ -511,6 +518,11 @@ func handleGetNamespaces(c *gin.Context, k8sClient *kubernetes.Clientset) {
 		items = append(items, ns.Name)
 	}
 	sort.Strings(items)
+	if app.Redis() != nil && cfg.PerformanceMode && cfg.NamespacesCacheTTLSec > 0 {
+		if b, err := json.Marshal(items); err == nil {
+			_ = app.Redis().Set(ctx, cacheKey, b, time.Duration(cfg.NamespacesCacheTTLSec)*time.Second)
+		}
+	}
 	c.JSON(http.StatusOK, items)
 }
 
@@ -520,7 +532,7 @@ func handleGetServices(c *gin.Context, k8sClient *kubernetes.Clientset) {
 	}
 	services, err := k8sClient.CoreV1().Services("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询服务失败: " + err.Error()})
+		RespondAPIError500(c, "查询服务失败: "+err.Error())
 		return
 	}
 	result := make([]map[string]interface{}, 0, len(services.Items))
@@ -538,7 +550,57 @@ func handleGetServices(c *gin.Context, k8sClient *kubernetes.Clientset) {
 	c.JSON(http.StatusOK, result)
 }
 
+func getDashboardRoleFromGin(c *gin.Context) string {
+	if v, ok := c.Get("dashboardRole"); ok {
+		s, _ := v.(string)
+		return s
+	}
+	return ""
+}
+
 func handleGetConfig(c *gin.Context, app *ServerApp) {
+	role := getDashboardRoleFromGin(c)
+	eff := getEffectiveDashboardPermissionsFromGin(c)
+	user, _ := c.Get("dashboardUser")
+	us, _ := user.(string)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+
+	if sec := configAPICacheTTLSec(); sec > 0 {
+		if rdb := app.Redis(); rdb != nil {
+			key := configAPICacheRedisKey(app.Cfg(), us, role)
+			if raw, err := rdb.Get(ctx, key); err == nil && strings.TrimSpace(raw) != "" {
+				c.Data(http.StatusOK, "application/json", []byte(raw))
+				return
+			}
+		}
+	}
+
+	out := buildConfigMapResponse(app, role, eff)
+	b, err := json.Marshal(out)
+	if err != nil {
+		RespondAPIError500(c, err.Error())
+		return
+	}
+	if sec := configAPICacheTTLSec(); sec > 0 {
+		if rdb := app.Redis(); rdb != nil {
+			key := configAPICacheRedisKey(app.Cfg(), us, role)
+			_ = rdb.Set(context.Background(), key, b, time.Duration(sec)*time.Second)
+		}
+	}
+	c.Data(http.StatusOK, "application/json", b)
+}
+
+// buildConfigMapResponse 与 GET /api/config 一致；非 admin 时对配置做脱敏。
+func buildConfigMapResponse(app *ServerApp, role string, eff *EffectiveDashboardPermissions) gin.H {
+	if eff == nil {
+		if role == DashboardRoleAdmin {
+			eff = defaultEffectiveAdmin()
+		} else {
+			eff = defaultEffectiveLegacyViewer()
+		}
+	}
 	cfg := app.Cfg()
 	sshStore := app.SSHStore()
 	httpsPort := envOrDefault("HTTPS_PORT", "443")
@@ -550,35 +612,74 @@ func handleGetConfig(c *gin.Context, app *ServerApp) {
 	if dashDays < 1 {
 		dashDays = 7
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"baotaUrl":                  cfg.BaotaURL,
-		"ddnsHost":                  cfg.DDNSHost,
-		"defaultPort":               cfg.DefaultPort,
-		"httpsPort":                 httpsPort,
-		"syncIntervalSec":           int(cfg.SyncInterval.Seconds()),
-		"baotaHttpTimeoutSec":       int(cfg.BaotaHTTPTimeout.Seconds()),
-		"baotaTcpProbeTimeoutSec":   int(cfg.BaotaTCPProbeTimeout.Seconds()),
-		"baotaDisableHttpKeepalive": cfg.BaotaDisableHTTPKeepAlive,
-		"baotaCheckMinIntervalSec":  int(cfg.BaotaCheckMinInterval.Seconds()),
-		"hasBaotaApiKey":            strings.TrimSpace(cfg.BaotaAPIKey) != "",
-		"baotaSkipTlsVerify":        cfg.BaotaSkipTLSVerify,
-		"baotaSslCertName":          cfg.BaotaSSLCertName,
-		"dashboardAuthEnabled":      cfg.DashboardAuthEnabled(),
-		"passwordLoginEnabled":      cfg.PasswordLoginEnabled(),
-		"oidcConfigured":            cfg.OIDCConfigured(),
-		"dashboardUser":             dashUser,
-		"dashboardSessionDays":      dashDays,
-		"dashboardListenAddr":       strings.TrimSpace(cfg.DashboardListenAddr),
-		"prometheusConfigured":      GetEffectivePrometheusURL(cfg) != "",
-		"prometheusUrlHint":         maskPrometheusURL(GetEffectivePrometheusURL(cfg)),
-		"prometheusTimeoutSec":      int(cfg.PrometheusTimeout.Seconds()),
-		"prometheusSkipTls":         cfg.PrometheusSkipTLS,
-		"prometheusHasBearer":       strings.TrimSpace(cfg.PrometheusBearerToken) != "",
-		"vcenterConfigured":         cfg.vCenterConfigured(),
-		"vcenterUrlHint":            maskVCenterURL(cfg.VCenterURL),
-		"vcenterUiOrigin":           vcenterUIOriginFromURL(cfg.VCenterURL),
-		"vcenterUiBaseUrl":          EffectiveVCenterUIBaseURL(cfg),
-		"vcenterUiLoginUrl":         vcenterUiLoginURL(cfg),
+	out := gin.H{
+		"baotaUrl":                    cfg.BaotaURL,
+		"ddnsHost":                    cfg.DDNSHost,
+		"defaultPort":                 cfg.DefaultPort,
+		"baotaUpstreamHost":           func() string { h, _, _ := BaotaOriginTarget(cfg, nil); return h }(),
+		"baotaUpstreamPort":           func() string { _, _, p := BaotaOriginTarget(cfg, nil); return p }(),
+		"baotaUpstreamScheme":         func() string { _, s, _ := BaotaOriginTarget(cfg, nil); return s }(),
+		"httpsPort":                   httpsPort,
+		"syncIntervalSec":             int(cfg.SyncInterval.Seconds()),
+		"baotaHttpTimeoutSec":         int(cfg.BaotaHTTPTimeout.Seconds()),
+		"baotaTcpProbeTimeoutSec":     int(cfg.BaotaTCPProbeTimeout.Seconds()),
+		"baotaDisableHttpKeepalive":   cfg.BaotaDisableHTTPKeepAlive,
+		"baotaCheckMinIntervalSec":    int(cfg.BaotaCheckMinInterval.Seconds()),
+		"hasBaotaApiKey":              strings.TrimSpace(cfg.BaotaAPIKey) != "",
+		"baotaTargets": func() []gin.H {
+			var rows []gin.H
+			for _, t := range EffectiveBaotaTargets(cfg) {
+				stv := cfg.BaotaSkipTLSVerify
+				if t.SkipTLSVerify != nil {
+					stv = *t.SkipTLSVerify
+				}
+				nm := strings.TrimSpace(t.DisplayName)
+				if nm == "" {
+					nm = t.ID
+				}
+				rows = append(rows, gin.H{
+					"id":            t.ID,
+					"name":          nm,
+					"url":           t.URL,
+					"hasApiKey":     strings.TrimSpace(t.APIKey) != "",
+					"skipTlsVerify": stv,
+					"default":       t.DefaultForSync,
+				})
+			}
+			return rows
+		}(),
+		"baotaSkipTlsVerify":          cfg.BaotaSkipTLSVerify,
+		"baotaSslCertName":            cfg.BaotaSSLCertName,
+		"hasBaotaSSLMaterial":         baotaSSLMaterialConfigured(app),
+		"dashboardAuthEnabled":        cfg.DashboardAuthEnabled(),
+		"passwordLoginEnabled":        cfg.PasswordLoginEnabled(),
+		"oidcConfigured":              cfg.OIDCConfigured(),
+		"dashboardUser":               dashUser,
+		"dashboardSessionDays":        dashDays,
+		"dashboardListenAddr":         strings.TrimSpace(cfg.DashboardListenAddr),
+		"prometheusConfigured":        GetEffectivePrometheusURL(cfg) != "",
+		"prometheusUrlHint":           maskPrometheusURL(GetEffectivePrometheusURL(cfg)),
+		"prometheusK8sConfigured":     GetPrometheusURLForScope(cfg, "k8s") != "",
+		"prometheusUrlK8sHint":        maskPrometheusURL(GetPrometheusURLForScope(cfg, "k8s")),
+		"prometheusVcenterConfigured": GetPrometheusURLForScope(cfg, "vcenter") != "",
+		"prometheusUrlVcenterHint":    maskPrometheusURL(GetPrometheusURLForScope(cfg, "vcenter")),
+		"prometheusCloudConfigured":   GetPrometheusURLForScope(cfg, "cloud") != "",
+		"prometheusUrlCloudHint":      maskPrometheusURL(GetPrometheusURLForScope(cfg, "cloud")),
+		"vmSelectUrlK8sHint":          maskPrometheusURL(cfg.VMSelectURLK8s),
+		"vmSelectUrlVcenterHint":      maskPrometheusURL(cfg.VMSelectURLVCenter),
+		"vmSelectUrlCloudHint":        maskPrometheusURL(cfg.VMSelectURLCloud),
+		"victoriaLogsConfigured":      strings.TrimSpace(cfg.VictoriaLogsURL) != "",
+		"victoriaLogsUrlHint":         maskPrometheusURL(cfg.VictoriaLogsURL),
+		"prometheusTimeoutSec":        int(cfg.PrometheusTimeout.Seconds()),
+		"kubebtMetricsPath":           "/metrics",
+		"kubebtPrometheusScrapeHint":  "Prometheus 增加 static_configs：targets 为本服务可达地址，metrics_path=/metrics，scheme=http/https 与监听一致；建议仅内网抓取。",
+		"prometheusSkipTls":           cfg.PrometheusSkipTLS,
+		"prometheusHasBearer":         strings.TrimSpace(cfg.PrometheusBearerToken) != "",
+		"vcenterConfigured":           cfg.vCenterConfigured(),
+		"vcenterUrlHint":              maskVCenterURL(cfg.VCenterURL),
+		"vcenterUiOrigin":             vcenterUIOriginFromURL(cfg.VCenterURL),
+		"vcenterUiBaseUrl":            EffectiveVCenterUIBaseURL(cfg),
+		"vcenterUiLoginUrl":           vcenterUiLoginURL(cfg),
 		// 未设置 WMKS 环境变量时，由 VCENTER_URL 推导常见路径；前端可按 candidates 依次尝试。
 		"vcenterWmksScriptUrl":           EffectiveVCenterWmksScriptURL(cfg),
 		"vcenterWmksCssUrl":              EffectiveVCenterWmksCssURL(cfg),
@@ -587,25 +688,137 @@ func handleGetConfig(c *gin.Context, app *ServerApp) {
 		"vcenterWmksScriptUrlFromEnv":    strings.TrimSpace(cfg.VCenterWmksScriptURL) != "",
 		"vcenterWmksCssUrlFromEnv":       strings.TrimSpace(cfg.VCenterWmksCssURL) != "",
 		"vcenterVmSshConfigured":         vcenterSSHConfiguredForUI(cfg, sshStore),
+		"vcenterVmSshGlobalConfigured":   cfg.vCenterVMSshConfigured(),
 		"sshSettingsBackend":             string(cfg.SSHSettingsBackend),
 		"sshStoreEnabled":                sshStore != nil,
 		"sshEncryptionReady": func() bool {
 			_, err := sshEncryptionKey(cfg)
 			return err == nil
 		}(),
-		"setupInitialized":        app.Initialized(),
-		"dataDir":                 app.DataDir(),
-		"platformPublicUrl":       cfg.PlatformPublicURL,
-		"ingressBaotaSyncEnabled": cfg.IngressBaotaSyncEnabled,
-		"vcenterCacheTtlSec":      cfg.VCenterCacheTTLSec,
-		"k8sConfigured":           app.K8s() != nil,
-		"redisConnected":          app.Redis() != nil,
-		"runtimeDualWriteRedis":   cfg.RuntimeDualWriteRedis,
-		"redisMirrorRuntimeKey":   redisRuntimeConfigKey(cfg),
+		"setupInitialized":      app.Initialized(),
+		"dataDir":               app.DataDir(),
+		"platformPublicUrl":     cfg.PlatformPublicURL,
+		"platformDisplayName":   strings.TrimSpace(cfg.PlatformDisplayName),
+		"platformLogoUrl":       strings.TrimSpace(cfg.PlatformLogoURL),
+		"platformFaviconUrl":    strings.TrimSpace(cfg.PlatformFaviconURL),
+		"assetsCdnBaseUrl":      EffectiveAssetsCDNBase(cfg),
+		"sshTerminalFontFamily": strings.TrimSpace(cfg.SshTerminalFontFamily),
+		"sshTerminalFontSize": func() int {
+			if cfg.SshTerminalFontSize <= 0 {
+				return 0
+			}
+			return cfg.SshTerminalFontSize
+		}(),
+		"ingressBaotaSyncEnabled":        cfg.IngressBaotaSyncEnabled,
+		"k8sAddonsManifestMirror":        K8sAddonsManifestMirrorCanonical(ParseManifestMirrorMode(cfg.K8sAddonsManifestMirror)),
+		"ingressNginxK8sRegistryMirror":  !cfg.IngressNginxSkipK8sRegistryMirror,
+		"ingressNginxHostHttpPort":       int(effectiveIngressNginxHostHTTPPort(app.Runtime(), cfg)),
+		"ingressNginxHostHttpsPort":      int(effectiveIngressNginxHostHTTPSPort(app.Runtime(), cfg)),
+		"ingressNginxControllerNodeName": effectiveIngressNginxControllerNodeName(app.Runtime(), cfg),
+		"vcenterCacheTtlSec":             cfg.VCenterCacheTTLSec,
+		"k8sConfigured":                  app.K8s() != nil,
+		"harborConfigured":               harborConfiguredFromCfg(cfg),
+		"harborUrlHint":                  maskHarborURL(cfg.HarborBaseURL),
+		"harborRegistryHost":             harborRegistryPullHost(cfg.HarborBaseURL),
+		"harborSkipTls":                  cfg.HarborSkipTLS,
+		"redisImageRegistry":             strings.TrimSpace(cfg.RedisImageRegistry),
+		"harborRedisConfigured":          strings.TrimSpace(cfg.RedisImageRegistry) != "",
+		"imageRegistryConfigured":        strings.TrimSpace(cfg.RedisImageRegistry) != "",
+		"redisK8sPersistenceEnabled":     cfg.RedisK8sPersistenceEnabled,
+		"redisK8sStorageSize":            cfg.RedisK8sStorageSize,
+		"redisK8sStorageClass":           cfg.RedisK8sStorageClass,
+		"redisImagePullSecretConfigured": strings.TrimSpace(cfg.RedisImagePullSecret) != "",
+		"redisEngineImagesConfigured":    len(cfg.RedisEngineImages) > 0,
+		"k8sRuntimeConfigured":           app.Runtime() != nil && K8sRuntimeConfigured(app.Runtime()),
+		"vcenterRuntimeConfigured":       VCenterRuntimeCredentialsPresent(cfg),
+		"redisAddrPresent":               RedisAddrConfigured(cfg),
+		"redisConfigured":                RedisAddrConfigured(cfg),
+		"redisConnected":                 app.Redis() != nil,
+		"redisError": func() string {
+			if !RedisAddrConfigured(cfg) || app.Redis() != nil {
+				return ""
+			}
+			return app.RedisDialError()
+		}(),
+		"runtimeDualWriteRedis":    cfg.RuntimeDualWriteRedis,
+		"redisMirrorRuntimeKey":    redisRuntimeConfigKey(cfg),
 		"redisMirrorPlatformKvKey": redisPlatformKVKey(cfg),
-		"mysqlDsnConfigured":      strings.TrimSpace(cfg.MySQLDSN) != "",
-		"platformKvReady":         app.PlatformKV() != nil,
-	})
+		"mysqlDsnConfigured":       strings.TrimSpace(cfg.MySQLDSN) != "",
+		"mysqlReachable":           app.MySQLDB() != nil,
+		"mysqlConnectError": func() string {
+			if strings.TrimSpace(cfg.MySQLDSN) != "" && app.MySQLDB() == nil {
+				return app.MySQLConnectError()
+			}
+			return ""
+		}(),
+		"platformKvReady":        app.PlatformKV() != nil,
+		"dashboardRole":          role,
+		"usersManagementEnabled": app.MySQLDB() != nil,
+		"docCenterMysqlReady":    app.MySQLDB() != nil,
+		"docCosConfigured":       cfg.CosObjectStorageConfigured(),
+		"k8sSidebarMenu":         RuntimeK8sSidebarMenuEffective(app.Runtime()),
+	}
+	if role != DashboardRoleAdmin {
+		sanitizeConfigMapForViewer(out)
+	}
+	out["permissions"] = EffectivePermissionsToPublic(eff)
+	return out
+}
+
+// sanitizeConfigMapForViewer 隐藏宝塔 URL、密钥状态、vCenter 细节等。
+func sanitizeConfigMapForViewer(h gin.H) {
+	h["baotaUrl"] = ""
+	h["hasBaotaApiKey"] = false
+	h["baotaTargets"] = []gin.H{}
+	h["baotaSslCertName"] = ""
+	h["hasBaotaSSLMaterial"] = false
+	h["baotaSkipTlsVerify"] = false
+	h["baotaHttpTimeoutSec"] = 0
+	h["baotaTcpProbeTimeoutSec"] = 0
+	h["baotaCheckMinIntervalSec"] = 0
+	h["baotaDisableHttpKeepalive"] = false
+	h["ddnsHost"] = ""
+	h["defaultPort"] = ""
+	h["baotaUpstreamHost"] = ""
+	h["baotaUpstreamPort"] = ""
+	h["baotaUpstreamScheme"] = "http"
+	h["ingressBaotaSyncEnabled"] = false
+	h["platformPublicUrl"] = ""
+	h["vcenterUrlHint"] = ""
+	h["vcenterUiOrigin"] = ""
+	h["vcenterUiBaseUrl"] = ""
+	h["vcenterUiLoginUrl"] = ""
+	h["vcenterWmksScriptUrl"] = ""
+	h["vcenterWmksCssUrl"] = ""
+	h["vcenterWmksScriptUrlCandidates"] = []string{}
+	h["vcenterWmksCssUrlCandidates"] = []string{}
+	h["vcenterWmksScriptUrlFromEnv"] = false
+	h["vcenterWmksCssUrlFromEnv"] = false
+	h["prometheusUrlHint"] = ""
+	h["prometheusUrlK8sHint"] = ""
+	h["prometheusUrlVcenterHint"] = ""
+	h["prometheusUrlCloudHint"] = ""
+	h["vmSelectUrlK8sHint"] = ""
+	h["vmSelectUrlVcenterHint"] = ""
+	h["vmSelectUrlCloudHint"] = ""
+	h["victoriaLogsUrlHint"] = ""
+	h["victoriaLogsConfigured"] = false
+	h["prometheusHasBearer"] = false
+	h["mysqlDsnConfigured"] = false
+	h["mysqlReachable"] = false
+	h["mysqlConnectError"] = ""
+	h["redisConfigured"] = false
+	h["redisConnected"] = false
+	h["redisError"] = ""
+	h["redisMirrorRuntimeKey"] = ""
+	h["redisMirrorPlatformKvKey"] = ""
+	h["dataDir"] = ""
+	h["sshEncryptionReady"] = false
+	h["sshSettingsBackend"] = ""
+	h["sshStoreEnabled"] = false
+	h["vcenterVmSshConfigured"] = false
+	h["vcenterVmSshGlobalConfigured"] = false
+	h["viewer"] = true
 }
 
 func vcenterSSHConfiguredForUI(cfg Config, sshStore SSHSettingsStore) bool {
@@ -619,13 +832,13 @@ func vcenterSSHConfiguredForUI(cfg Config, sshStore SSHSettingsStore) bool {
 	return err == nil
 }
 
-func handleListAllIngresses(c *gin.Context, k8sClient *kubernetes.Clientset) {
+func handleListAllIngresses(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
 	if !GuardK8s(c, k8sClient) {
 		return
 	}
 	ingresses, err := k8sClient.NetworkingV1().Ingresses("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 Ingress 失败: " + err.Error()})
+		RespondAPIError500(c, "查询 Ingress 失败: "+err.Error())
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(ingresses.Items))
@@ -643,14 +856,23 @@ func handleListAllIngresses(c *gin.Context, k8sClient *kubernetes.Clientset) {
 		if className == "" {
 			className = ing.Annotations["kubernetes.io/ingress.class"]
 		}
-		out = append(out, map[string]interface{}{
+		managed := IsManagedIngress(ing.Annotations)
+		item := map[string]interface{}{
 			"namespace": ing.Namespace,
 			"name":      ing.Name,
 			"hosts":     hosts,
 			"class":     className,
 			"createdAt": ing.CreationTimestamp.Format(time.RFC3339),
-			"managed":   IsManagedIngress(ing.Annotations),
-		})
+			"managed":   managed,
+		}
+		if managed {
+			targetHost, scheme, port := BaotaOriginTarget(cfg, ing.Annotations)
+			item["upstreamHost"] = targetHost
+			item["scheme"] = scheme
+			item["ddnsPort"] = port
+			item["baotaTargetId"] = BaotaTargetIDFromIngress(ing.Annotations)
+		}
+		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -687,21 +909,27 @@ func handleDeleteIngress(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Co
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
 		return
 	}
+	btCfg := cfg
+	if ing, err := k8sClient.NetworkingV1().Ingresses(req.Namespace).Get(context.TODO(), req.Name, metav1.GetOptions{}); err == nil && ing != nil {
+		tid := BaotaTargetIDFromIngress(ing.Annotations)
+		btCfg = ConfigForBaotaTargetID(cfg, tid)
+	}
 	if err := k8sClient.NetworkingV1().Ingresses(req.Namespace).Delete(context.TODO(), req.Name, metav1.DeleteOptions{}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除 Ingress 失败: " + err.Error()})
+		RespondAPIError500(c, "删除 Ingress 失败: "+err.Error())
 		return
 	}
 
 	msg := "Ingress 删除成功"
 	if req.DeleteBaota && strings.TrimSpace(req.Domain) != "" {
-		if btErr := DeleteBaotaSiteAndProxy(cfg, req.Domain); btErr != nil {
+		if btErr := DeleteBaotaSiteAndProxy(btCfg, req.Domain); btErr != nil {
 			log.Printf("宝塔删除失败，将后台重试: %v", btErr)
-			ScheduleBaotaDeleteRetry(cfg, req.Domain)
+			ScheduleBaotaDeleteRetry(btCfg, req.Domain)
 			msg = fmt.Sprintf("Ingress 已删除；宝塔清理失败（已排队重试）: %v", btErr)
 		} else {
 			msg = "Ingress 和宝塔站点均删除成功"
 		}
 	}
+	SetAuditDetail(c, "删除 Ingress "+req.Namespace+"/"+req.Name+"（域名="+strings.TrimSpace(req.Domain)+"，删宝塔="+fmt.Sprintf("%v", req.DeleteBaota)+"）")
 	c.JSON(http.StatusOK, gin.H{"message": msg})
 }
 
@@ -765,7 +993,37 @@ func probeBaotaForSystemCheck(cfg Config) (status string, msg string) {
 	return "success", okMsg
 }
 
-func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Config) {
+func handleSystemCheck(c *gin.Context, app *ServerApp) {
+	out := buildSystemCheckResponse(c.Request.Context(), app, getDashboardRoleFromGin(c))
+	c.JSON(http.StatusOK, out)
+}
+
+// buildSystemCheckResponse 与 GET /api/system/check 一致。
+func buildSystemCheckResponse(ctx context.Context, app *ServerApp, role string) gin.H {
+	k8sClient := app.K8s()
+	cfg := app.Cfg()
+	k8sProbeCtx, k8sProbeCancel := context.WithTimeout(ctx, 8*time.Second)
+	defer k8sProbeCancel()
+	if role == DashboardRoleViewer {
+		ingressInstalled := false
+		ingressHostNetwork := false
+		nodeIP := ""
+		if k8sClient != nil {
+			ingressInstalled = DetectIngressController(k8sProbeCtx, k8sClient)
+			ingressHostNetwork = DetectIngressControllerHostNetwork(k8sProbeCtx, k8sClient)
+			nodeIP = FirstNodeIPPreferInternal(k8sProbeCtx, k8sClient)
+		}
+		return gin.H{
+			"baota": gin.H{"status": "hidden", "url": "", "msg": "仅管理员可查看宝塔连通性"},
+			"ddns":  gin.H{"status": "hidden", "host": "", "ips": []string{}, "msg": "仅管理员可查看", "port443": false, "httpsPort": "443"},
+			"k8s": gin.H{
+				"ingressInstalled":   ingressInstalled,
+				"ingressHostNetwork": ingressHostNetwork,
+				"nodeIP":             nodeIP,
+			},
+		}
+	}
+
 	baotaStatus, baotaMsg := probeBaotaForSystemCheck(cfg)
 
 	ddnsIPs, _ := net.LookupHost(cfg.DDNSHost)
@@ -784,16 +1042,16 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 	httpsPort := envOrDefault("HTTPS_PORT", "443")
 	port443 := isTCPReachable(cfg.DDNSHost, httpsPort, 2*time.Second)
 
-	metallbInstalled := false
 	ingressInstalled := false
+	ingressHostNetwork := false
 	nodeIP := ""
 	if k8sClient != nil {
-		metallbInstalled = DetectMetalLBNamespace(k8sClient)
-		ingressInstalled = DetectIngressController(k8sClient)
-		nodeIP = FirstNodeIPPreferInternal(k8sClient)
+		ingressInstalled = DetectIngressController(k8sProbeCtx, k8sClient)
+		ingressHostNetwork = DetectIngressControllerHostNetwork(k8sProbeCtx, k8sClient)
+		nodeIP = FirstNodeIPPreferInternal(k8sProbeCtx, k8sClient)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"baota": gin.H{
 			"status": baotaStatus,
 			"url":    cfg.BaotaURL,
@@ -808,11 +1066,11 @@ func handleSystemCheck(c *gin.Context, k8sClient *kubernetes.Clientset, cfg Conf
 			"httpsPort": httpsPort,
 		},
 		"k8s": gin.H{
-			"metallbInstalled": metallbInstalled,
-			"ingressInstalled": ingressInstalled,
-			"nodeIP":           nodeIP,
+			"ingressInstalled":   ingressInstalled,
+			"ingressHostNetwork": ingressHostNetwork,
+			"nodeIP":             nodeIP,
 		},
-	})
+	}
 }
 
 func isTCPReachable(host, port string, timeout time.Duration) bool {
@@ -834,14 +1092,4 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-=======
-		ingress.ResourceVersion = existing.ResourceVersion
-		_, err = client.Update(context.TODO(), &ingress, metav1.UpdateOptions{})
-	} else {
-		_, err = client.Create(context.TODO(), &ingress, metav1.CreateOptions{})
-	}
-
-	if err != nil { c.JSON(500, gin.H{"error": "K8s 操作失败: " + err.Error()}); return }
-	c.JSON(200, gin.H{"message": "配置下发/修改成功！事件监听器已接管同步..."})
->>>>>>> d16bf5922f8c5e8a4fe187f8af50fc5f2eaa7661
 }

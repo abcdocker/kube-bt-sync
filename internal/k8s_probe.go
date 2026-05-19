@@ -9,45 +9,36 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// DetectMetalLBNamespace 是否安装了 MetalLB：常见为 metallb-system，部分 chart 使用 metallb 等前缀。
-func DetectMetalLBNamespace(k8sClient *kubernetes.Clientset) bool {
-	list, err := k8sClient.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
+// DetectIngressControllerHostNetwork ingress-nginx 控制器 Deployment 是否启用 hostNetwork。
+func DetectIngressControllerHostNetwork(ctx context.Context, k8sClient *kubernetes.Clientset) bool {
+	dep, err := k8sClient.AppsV1().Deployments("ingress-nginx").Get(ctx, "ingress-nginx-controller", metav1.GetOptions{})
+	if err != nil || dep == nil {
 		return false
 	}
-	for _, n := range list.Items {
-		name := n.Name
-		if name == "metallb-system" || name == "metallb" {
-			return true
-		}
-		if strings.HasPrefix(name, "metallb-") {
-			return true
-		}
-	}
-	return false
+	return dep.Spec.Template.Spec.HostNetwork
 }
 
 // DetectIngressController 是否可能存在 Ingress 实现：优先 IngressClass（通用），再扫常见控制器工作负载。
-func DetectIngressController(k8sClient *kubernetes.Clientset) bool {
-	if hasIngressClasses(k8sClient) {
+func DetectIngressController(ctx context.Context, k8sClient *kubernetes.Clientset) bool {
+	if hasIngressClasses(ctx, k8sClient) {
 		return true
 	}
-	if hasIngressLikeDaemonSet(k8sClient) {
+	if hasIngressLikeDaemonSet(ctx, k8sClient) {
 		return true
 	}
-	if hasIngressLikeDeployment(k8sClient) {
+	if hasIngressLikeDeployment(ctx, k8sClient) {
 		return true
 	}
 	return false
 }
 
-func hasIngressClasses(k8sClient *kubernetes.Clientset) bool {
-	list, err := k8sClient.NetworkingV1().IngressClasses().List(context.TODO(), metav1.ListOptions{})
+func hasIngressClasses(ctx context.Context, k8sClient *kubernetes.Clientset) bool {
+	list, err := k8sClient.NetworkingV1().IngressClasses().List(ctx, metav1.ListOptions{})
 	return err == nil && len(list.Items) > 0
 }
 
-func hasIngressLikeDaemonSet(k8sClient *kubernetes.Clientset) bool {
-	list, err := k8sClient.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
+func hasIngressLikeDaemonSet(ctx context.Context, k8sClient *kubernetes.Clientset) bool {
+	list, err := k8sClient.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return false
 	}
@@ -59,8 +50,8 @@ func hasIngressLikeDaemonSet(k8sClient *kubernetes.Clientset) bool {
 	return false
 }
 
-func hasIngressLikeDeployment(k8sClient *kubernetes.Clientset) bool {
-	list, err := k8sClient.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
+func hasIngressLikeDeployment(ctx context.Context, k8sClient *kubernetes.Clientset) bool {
+	list, err := k8sClient.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return false
 	}
@@ -101,8 +92,8 @@ func workloadLooksLikeIngressController(namespace, name string) bool {
 }
 
 // FirstNodeIPPreferInternal 展示用节点 IP：优先内网，无则外网。
-func FirstNodeIPPreferInternal(k8sClient *kubernetes.Clientset) string {
-	nodes, err := k8sClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+func FirstNodeIPPreferInternal(ctx context.Context, k8sClient *kubernetes.Clientset) string {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil || len(nodes.Items) == 0 {
 		return ""
 	}

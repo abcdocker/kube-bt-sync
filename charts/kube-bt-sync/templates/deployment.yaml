@@ -39,3 +39,9 @@ spec:
         - name: AUTH_PASSWORD
           value: {{ .Values.config.authPassword | quote }}
         {{- end }}
+        {{- if .Values.app.performance.goMaxProcs }}
+        - name: KUBEBT_GOMAXPROCS
+          value: {{ .Values.app.performance.goMaxProcs | quote }}
+        {{- end }}
+        - name: KUBEBT_ENABLE_BACKGROUND_JOBS
+          value: {{ .Values.app.performance.enableBackgroundJobs | quote }}

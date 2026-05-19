@@ -7,6 +7,7 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - pvc.yaml
+  # Secret 请自行创建（见 secret-example.yaml），勿将真实密钥提交仓库
   - deployment.yaml
   - service.yaml
 
@@ -19,6 +20,5 @@ labels:
       app.kubernetes.io/component: kube-bt-sync
     includeSelectors: false
 
-# 构建镜像后替换 Deployment 中的 image，例如：
-# kubectl kustomize deploy | sed 's|ghcr.io/OWNER/kube-bt-sync:latest|registry.local/kube-bt-sync:1.0|'
-# 或: kubectl apply -k deploy/ && kubectl set image deployment/kube-bt-sync kube-bt-sync=...
+# 单文件一键部署（含 NodePort 32080）：kubectl apply -f deploy/kube-bt-sync-all.yaml
+# 模块化：kubectl apply -k deploy/

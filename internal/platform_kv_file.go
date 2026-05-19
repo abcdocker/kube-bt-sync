@@ -75,3 +75,5 @@ func (p *PlatformKVFile) saveLocked() error {
 	}
 	return os.Rename(tmp, p.path)
 }
+
+var _ PlatformKV = (*PlatformKVFile)(nil)

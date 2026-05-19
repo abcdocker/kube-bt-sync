@@ -1,132 +1,201 @@
-# 🚀 kube-bt-sync (K8s 边缘网关同步中心)
-
-![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-Compatible-326ce5?style=for-the-badge&logo=kubernetes)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-
-**kube-bt-sync** 是一款专为 HomeLab 和自建 Kubernetes 集群打造的自动化边缘网关同步工具。
-
-它通过监听集群中的 Ingress，自动将路由同步至公网宝塔面板（Nginx），**解决家庭宽带 80/443 被封、需带端口访问**的问题。内置 **React + Vite** Web 控制台，支持 Ingress 管理、集群资源浏览、可选 vCenter 集成等。
-
----
-
-## ✨ 核心特性
-
-- 🕸️ **云边协同组网**：公网宝塔面板处理 HTTPS 与 WAF 防护，后端流量精准穿透至家庭 K8s 节点。
-- 🖥️ **高颜值 Web 控制台**：提供大盘监控，前端原生支持自定义 HTTPS 端口全链路探活探测。
-- 🖱️ **配置可视化与在线编辑**：
-  - **可视化向导**：智能联动获取 Namespace/Service/Port。
-  - **在线编辑与查看**：一键提取存量 Ingress 纯净 YAML，支持页面直接修改覆盖。
-  - **版本审计**：追踪路由 K8s ResourceVersion 变更记录，精确显示创建时间和修改时间。
-- 🔒 **一键原生 SSL/HTTPS 支持**：申请 Ingress 界面提供 SSL 开启开关，自动注入标准 TLS 证书块，无缝对接 Let's Encrypt。
-- 📡 **智能雷达探测**：自动识别 `MetalLB` 和 `Ingress-Nginx` 的部署状态（兼容 DaemonSet 裸机模式）。
-- 🔄 **事件驱动极速同步**：废弃高频轮询，全面拥抱 K8s Native Watcher (事件驱动)，精准捕捉配置变动，宝塔 API 零压迫。
+<p align="center">
+  <h1 align="center">Kube-BT-Sync</h1>
+  <p align="center">
+    面向自建 Kubernetes 与家庭宽带的 <strong>Ingress ↔ 宝塔面板</strong> 同步与 Web 控制台
+  </p>
+  <p align="center">
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+    <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go">
+    <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React">
+    <img src="https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes" alt="Kubernetes">
+  </p>
+</p>
 
 ---
 
-## 🗺️ 架构与流量链路
+## 📖 简介
 
-外网用户访问您的业务域名时，流量流经如下路径：
+**Kube-BT-Sync** 是一个面向 Homelab / 自建集群的边缘网关同步中心。它在 Kubernetes 集群内部监听 Ingress 变化，自动将路由规则同步到公网宝塔面板（或任意 Nginx）；同时提供一个内置的 React Web 控制台，支持：
 
-1. **外网访客** ➜ 访问公网域名 `https://app.i4t.com`
-2. **云端宝塔面板** ➜ 接收请求，通过反向代理将流量打向家庭宽带的 DDNS 地址和高端口 (例: `home.i4t.com:38333`)
-3. **家庭主路由器 (NAT)** ➜ 接收到流量，转发至 K8s 物理节点的 `80/443` 端口
-4. **K8s Ingress 控制器** ➜ Nginx 接收流量，根据 Ingress 规则路由给具体的业务 Pod
+- **Kubernetes** 资源可视化管理（Pods、Nodes、Services、工作负载、RBAC 等）
+- **宝塔面板** 对接与 HTTPS 证书管理
+- **应用中心**（Redis、Kafka、OpenSearch、云主机）一键部署与纳管
+- **vCenter / 公有云** 虚拟机列表、WebMKS 控制台与 SSH 终端
+- **可观测性** Prometheus / VictoriaMetrics / VictoriaLogs 统一查询入口
+- **文档中心** Markdown 知识库与附件管理
 
----
+## 🚀 核心功能
 
-## 🐳 构建镜像
+| 模块 | 说明 |
+| :--- | :--- |
+| **工作台** | 首页汇总，支持 Kubernetes、vCenter、宝塔、应用中心、文档等多工作区切换 |
+| **Kubernetes** | 集群概览、按命名空间浏览资源、Pods 日志/终端、Nodes、Services、工作负载、RBAC 只读视图 |
+| **宝塔** | Ingress 列表、与宝塔 Nginx 的自动同步、SSL 证书设置 |
+| **应用中心** | Redis / Kafka / OpenSearch / 云主机 的模板化部署与生命周期管理 |
+| **vCenter / 公有云** | 虚拟机资产、WebMKS 控制台、SSH 终端、云主机纳管（需配置 vCenter 或 SSH 凭据） |
+| **可观测性** | 集群/虚拟机/公有云监控统一查询、日志检索（VictoriaLogs）、巡检报告 |
+| **账户与权限** | 本地登录、TOTP 双因素认证、OIDC（Authentik 等）、平台用户与角色管理 |
+| **文档中心** | Markdown 编辑器、分类与标签、附件存储（本地或腾讯云 COS） |
+
+## 🏗️ 技术栈
+
+### 后端
+
+| 技术 | 用途 |
+| :--- | :--- |
+| [Go 1.25+](https://go.dev/) | 主服务语言 |
+| [Gin](https://github.com/gin-gonic/gin) | HTTP Web 框架 |
+| [client-go](https://github.com/kubernetes/client-go) | Kubernetes API 交互 |
+| [MySQL](https://github.com/go-sql-driver/mysql) | 业务持久化（用户、审计、应用实例、文档等） |
+| [Redis](https://github.com/redis/go-redis) | 缓存、会话、运行时配置镜像 |
+| [go-oidc](https://github.com/coreos/go-oidc) | OIDC / OAuth2 认证 |
+| [govmomi](https://github.com/vmware/govmomi) | vSphere / vCenter 集成 |
+| [franz-go](https://github.com/twmb/franz-go) | Kafka Admin 客户端 |
+| [x/crypto](https://golang.org/x/crypto) | SSH / SFTP / 加密存储 |
+
+### 前端
+
+| 技术 | 用途 |
+| :--- | :--- |
+| [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) | UI 框架 |
+| [Vite](https://vitejs.dev/) | 构建工具 |
+| [Tailwind CSS v4](https://tailwindcss.com/) + [Radix UI](https://www.radix-ui.com/) | 样式与组件基础 |
+| [shadcn/ui](https://ui.shadcn.com/) 风格 | 组件设计体系 |
+| [TanStack Query](https://tanstack.com/query) | 服务端状态管理 |
+| [React Router v7](https://reactrouter.com/) | 路由 |
+| [XTerm.js](https://xtermjs.org/) | Web SSH 终端 |
+| [Recharts](https://recharts.org/) | 图表 |
+| [ByteMD](https://github.com/bytedance/bytemd) | Markdown 编辑器 |
+| [Excalidraw](https://excalidraw.com/) | 白板绘图 |
+
+## 📦 快速开始
+
+### 前置要求
+
+- Kubernetes 集群（1.28+）
+- 集群内可访问的 **MySQL** 与 **Redis**
+- （可选）宝塔面板（用于 Ingress 同步）
+- （可选）vCenter（用于虚拟机管理）
+
+### 方式一：一键部署（推荐）
 
 ```bash
-docker build -t your-registry/kube-bt-sync:latest .
+kubectl apply -f deploy/kube-bt-sync-all.yaml
 ```
 
-多架构示例（需 Docker Buildx）：
+清单包含：Namespace、RBAC、PVC（5Gi）、Deployment、ClusterIP Service、**NodePort 32080**。
 
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t your-registry/kube-bt-sync:latest --push .
-```
+1. 等待 Pod Running：`kubectl -n kube-bt-sync get pod,pvc`
+2. 浏览器访问 `http://<任意节点IP>:32080/setup` 完成向导
+3. （可选）配置 Ingress + HTTPS：`kubectl apply -f deploy/ingress.yaml`
 
----
+> 若私有仓库需登录拉取镜像，参考 `deploy/kube-bt-sync-all.yaml` 文件头注释创建 `docker-registry` Secret。
 
-## ☸️ 部署到 Kubernetes
-
-### 方式一：Helm (推荐)
+### 方式二：Helm
 
 ```bash
 helm install kube-bt-sync ./charts/kube-bt-sync \
   --namespace kube-bt-sync --create-namespace \
-  --set image.repository=your-registry/kube-bt-sync \
-  --set image.tag=latest
+  --set app.image.repository=your-registry/kube-bt-sync \
+  --set app.image.tag=latest
 ```
 
-### 方式二：Kustomize
+### 方式三：本地开发
 
 ```bash
-kubectl apply -k deploy/
+# 一键启动后端 + 构建前端
+./run.sh
+
+# 前端独立开发（热更新）
+cd react && npm ci && npm run dev
 ```
 
----
+默认监听 `http://127.0.0.1:8080/`；若 8080 被占用，脚本会自动改用其他端口。
 
-## 🎯 如何接管存量 Ingress
+## ⚙️ 关键环境变量
 
-如果您在部署 Kube-BT-Sync 之前，集群中已经存在跑着的业务 Ingress，**完全不需要删除重建！**
+完整解析见 `internal/config.go` 中 `LoadConfig()`。
 
-只需执行以下命令，工具就会瞬间接管并在 UI 面板中展现其创建与修改记录：
+| 变量 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `DASHBOARD_HTTP_ADDR` | 监听地址 | `:8080` |
+| `DASHBOARD_PASSWORD` | Web 登录密码（空则禁用本地登录） | 来自 Secret |
+| `DASHBOARD_SESSION_SECRET` | 会话签名密钥（**多副本必填**） | 随机 64 位 hex |
+| `DASHBOARD_COOKIE_SECURE` | HTTPS 时设为 `true` | `true` |
+| `DASHBOARD_TRUSTED_PROXIES` | 可信代理 CIDR | `10.0.0.0/8,172.16.0.0/12` |
+| `BAOTA_URL` / `BAOTA_API_KEY` | 宝塔 API 地址与密钥 | — |
+| `VCENTER_URL` / `VCENTER_USER` / `VCENTER_PASSWORD` | vCenter 连接信息 | — |
+| `MYSQL_DSN` 或 `MYSQL_HOST` 系列 | MySQL 连接 | — |
+| `REDIS_ADDR` / `REDIS_PASSWORD` | Redis 连接 | — |
+| `KUBEBT_DATA_DIR` | 数据目录（建议挂载 PVC） | `/data` |
+| `KUBEBT_ENCRYPTION_KEY` | 加密 SSH/SFTP 等敏感信息的密钥 | 随机长串 |
+| `OIDC_ISSUER_URL` 等 | OIDC 配置（四项同时配置才生效） | — |
+| `KUBEBT_ENABLE_BACKGROUND_JOBS` | 是否启用后台同步/巡检 | `true` |
+
+更多变量（Prometheus、Harbor、COS、TOTP、性能模式等）请参考源码 `internal/config.go` 注释或部署清单中的示例。
+
+## 🔒 安全建议
+
+- **敏感配置**（密码、API Key）请使用 Kubernetes `Secret` 注入，**不要**直接写入镜像或 ConfigMap。
+- **多副本**时务必显式设置 `DASHBOARD_SESSION_SECRET`，并确保仅 1 个 Pod 的 `KUBEBT_ENABLE_BACKGROUND_JOBS=true`。
+- 生产环境建议通过 **Ingress + HTTPS** 暴露，设置 `DASHBOARD_COOKIE_SECURE=true`。
+- 配置可信代理 `DASHBOARD_TRUSTED_PROXIES` 以正确获取客户端真实 IP；裸机/公网直连时保持默认（不信任 XFF）。
+- 详细安全策略与漏洞报告方式见 [SECURITY.md](./SECURITY.md)。
+
+## 🏗️ 镜像构建
 
 ```bash
-kubectl annotate ingress <你的存量Ingress名称> -n <命名空间> i4t.com/baota-sync="true"
+# 单架构
+docker build -t your-registry/kube-bt-sync:latest .
+
+# 多架构（Buildx）
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t your-registry/kube-bt-sync:latest --push .
 ```
 
-接入后，您可以直接在 Web 页面点击 **"📝 编辑"**，即可进入 YAML 极客模式安全地修改并覆盖它。
+构建特性：
+- 多阶段构建，最终镜像不含 Node/npm
+- 运行时基于 `distroless/static-debian12:nonroot`（无 shell，攻击面小）
+- 静态链接，`-trimpath`、`-ldflags="-s -w"` 去除符号表
+- 镜像内无 `curl`/`wget`，健康检查请使用 HTTP 探针 `/api/health`
 
----
+## 🧩 接管存量 Ingress
 
-## ⚙️ 环境变量配置说明
+为已有 Ingress 打上注解即可被纳管：
 
-| 变量名 | 必填 | 说明 | 示例值 |
-| :--- | :---: | :--- | :--- |
-| `AUTH_USER` | 是 | Web 控制台登录账号 | `admin` |
-| `AUTH_PASSWORD` | 是 | Web 控制台登录密码 | `i4t123456` |
-| `BAOTA_URL` | 是 | 宝塔面板 API 接口地址 | `http://110.x.x.x:8888` |
-| `BAOTA_API_KEY` | 是 | 宝塔面板 API 密钥 | `faEZ...` |
-| `DDNS_HOST` | 是 | 家庭宽带绑定的动态域名 | `home.i4t.com` |
-| `DEFAULT_PORT`| 是 | 宝塔反代接收默认端口 | `38333` |
-| `HTTPS_PORT`| 否 | 自定义外网直连 HTTPS 端口，默认 443 | `44333` |
+```bash
+kubectl annotate ingress <name> -n <namespace> i4t.com/baota-sync="true"
+```
 
----
-
-## 🛠️ 路由器 NAT 映射配置 (极度重要)
-
-为保障内外网流量精准穿透以及 HTTPS 证书验证，请在您的主路由器中配置 **两组** 端口映射规则 (指向 K8s 物理节点)：
-
-* **【规则 1 - 宝塔反代专用】**
-  * 外部端口：`38333` (对应 `DEFAULT_PORT`) ➜ 内部端口：`80` 
-* **【规则 2 - HTTPS 证书签发/直连】**
-  * 外部端口：`443` (对应 `HTTPS_PORT` 变量) ➜ 内部端口：`443` (标准 HTTPS 流量与内部组件 ACME 验证必需)
-
----
-
-## ⚠️ 常见问题避坑指南 (FAQ)
-
-### Q1: 页面访问报 `ERR_TOO_MANY_REDIRECTS` (308 重定向死循环)？
-
-当外网宝塔 Nginx 卸载了 HTTPS 证书，用纯 HTTP 将请求转发给家庭内网的 K8s Ingress 时，由于内网 Ingress 也配置了 TLS，K8s 会默认将 HTTP 请求强制重定向回 HTTPS，导致死循环。
-
-**解决方案：**
-
-Kube-BT-Sync 控制台生成的 Ingress 已默认添加防重定向注解。对于手工编写的 Ingress，请务必加上：
+如需宝塔侧同时启用 HTTPS，可增加：
 
 ```yaml
 annotations:
-  nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  i4t.com/baota-sync: "true"
+  i4t.com/baota-https: "true"
+  i4t.com/baota-ssl-cert-name: "example-cert"
 ```
+
+## 📁 配置持久化说明
+
+| 数据类型 | 存储位置 | 说明 |
+| :--- | :--- | :--- |
+| **核心运行时配置** | `dataDir/runtime-config.json`（PVC） | 宝塔、vCenter、MySQL/Redis 连接等 |
+| **平台 KV** | `dataDir/platform_kv.json`（PVC）+ 可选 Redis 镜像 | 侧边栏菜单、登录安全状态等 |
+| **业务数据** | MySQL | 用户、审计日志、Redis/Kafka/CloudVM 实例、文档中心等 |
+| **SSH 凭据** | `dataDir/ssh-settings/`（PVC，推荐）或预留 MySQL | 私钥与密码（经 `KUBEBT_ENCRYPTION_KEY` 加密） |
+| **审计与日志** | 本地文件（PVC）+ MySQL `kubebt_audit_log` | 访问日志与操作审计 |
+
+> **权威配置仍以 PVC 文件为准**，Redis 双写为灾备镜像。启动时若本地未初始化，可尝试从 Redis 拉回。
+
+## 🤝 贡献
+
+欢迎 Issue 和 Pull Request！请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## 📄 许可证
+
+[MIT License](./LICENSE)
 
 ---
 
-## 🤝 贡献与 License
-
-欢迎 Issue / PR。若对你有帮助，请给个 ⭐。
-
-MIT License.
+> **免责声明**：本项目主要面向 Homelab 与自建基础设施场景。生产环境使用前请充分评估安全与可靠性需求。

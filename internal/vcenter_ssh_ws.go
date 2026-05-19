@@ -107,12 +107,57 @@ func buildSSHClientConfigMerged(cfg Config, st *SSHVMStored) (*ssh.ClientConfig,
 	}, nil
 }
 
-func handleVCenterVMSSHWS(c *gin.Context, vc *vCenterClient, cfg Config, store SSHSettingsStore) {
+// sshDialVCenterVMClient 通过 vCenter 解析 Guest IP 后 SSH 拨号（凭据与 /api/vcenter/vms/:moref/ssh/ws 一致）。
+func sshDialVCenterVMClient(ctx context.Context, vc *vCenterClient, cfg Config, store SSHSettingsStore, moref string, key []byte) (*ssh.Client, error) {
+	if vc == nil {
+		return nil, fmt.Errorf("vCenter 未初始化")
+	}
+	if !vc.cfg.vCenterConfigured() {
+		return nil, fmt.Errorf("vCenter 未配置")
+	}
+	moref = strings.TrimSpace(moref)
+	if moref == "" {
+		return nil, fmt.Errorf("缺少虚拟机 moRef")
+	}
+	var st *SSHVMStored
+	if store != nil && len(key) > 0 {
+		var err error
+		st, err = store.GetVM(ctx, moref, key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sshCfg, err := buildSSHClientConfigMerged(cfg, st)
+	if err != nil {
+		return nil, err
+	}
+	var guestIP string
+	err = vc.WithClientRetry(ctx, func(govClient *govmomi.Client) error {
+		var e error
+		guestIP, e = vcenterVMPrimaryGuestIP(ctx, govClient, moref)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	port := cfg.VCenterVMSshPort
+	if st != nil && st.Port > 0 {
+		port = st.Port
+	}
+	addr := net.JoinHostPort(guestIP, strconv.Itoa(port))
+	_ = ctx
+	return ssh.Dial("tcp", addr, sshCfg)
+}
+
+func handleVCenterVMSSHWS(c *gin.Context, vc *vCenterClient, cfg Config, store SSHSettingsStore, app *ServerApp) {
 	if !vc.cfg.vCenterConfigured() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "vCenter 未配置"})
 		return
 	}
 	moref := strings.TrimSpace(c.Param("moref"))
+	if vcenterBastionAbortIfForbidden(c, app, moref) {
+		return
+	}
 	ctx := c.Request.Context()
 
 	key, kerr := sshEncryptionKey(cfg)
@@ -125,12 +170,12 @@ func handleVCenterVMSSHWS(c *gin.Context, vc *vCenterClient, cfg Config, store S
 		return
 	}
 
-	govClient, err := vc.getClient(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	guestIP, err := vcenterVMPrimaryGuestIP(ctx, govClient, moref)
+	var guestIP string
+	err := vc.WithClientRetry(ctx, func(govClient *govmomi.Client) error {
+		var e error
+		guestIP, e = vcenterVMPrimaryGuestIP(ctx, govClient, moref)
+		return e
+	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -142,6 +187,10 @@ func handleVCenterVMSSHWS(c *gin.Context, vc *vCenterClient, cfg Config, store S
 		return
 	}
 	defer conn.Close()
+
+	doneKA := make(chan struct{})
+	defer close(doneKA)
+	startWebSocketBastionKeepalive(conn, doneKA)
 
 	sshCfg, err := buildSSHClientConfigMerged(cfg, st)
 	if err != nil {
@@ -177,6 +226,8 @@ func handleVCenterVMSSHWS(c *gin.Context, vc *vCenterClient, cfg Config, store S
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(err.Error()+"\r\n"))
 		return
 	}
+
+	sshSessionApplyTermEnv(sess, "xterm-256color")
 
 	if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{}); err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("PTY: "+err.Error()+"\r\n"))

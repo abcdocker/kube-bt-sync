@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -44,12 +46,18 @@ func handleSetupSave(app *ServerApp) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		if err := validateBaotaSSLMaterialContent(rs.BaotaSSLPemContent, rs.BaotaSSLKeyContent); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		incomingBaotaSSLPemContent := strings.TrimSpace(rs.BaotaSSLPemContent)
+		incomingBaotaSSLKeyContent := strings.TrimSpace(rs.BaotaSSLKeyContent)
 		rs.Version = 1
 		rs.Initialized = true
 
 		hash, err := bcrypt.GenerateFromPassword([]byte(body.DashboardPasswordPlain), bcrypt.DefaultCost)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码哈希失败"})
+			RespondAPIError500(c, "密码哈希失败")
 			return
 		}
 		rs.DashboardPassword = string(hash)
@@ -57,7 +65,7 @@ func handleSetupSave(app *ServerApp) gin.HandlerFunc {
 		if strings.TrimSpace(rs.DashboardSessionSecret) == "" {
 			b := make([]byte, 32)
 			if _, err := rand.Read(b); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "生成会话密钥失败"})
+				RespondAPIError500(c, "生成会话密钥失败")
 				return
 			}
 			rs.DashboardSessionSecret = hex.EncodeToString(b)
@@ -72,14 +80,40 @@ func handleSetupSave(app *ServerApp) gin.HandlerFunc {
 			return
 		}
 
-		if err := SaveRuntimeSettings(path, rs); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "写入配置失败: " + err.Error()})
+		var mysqlWrite *sql.DB
+		if dsn := strings.TrimSpace(tmpCfg.MySQLDSN); dsn != "" {
+			d, err := OpenMySQLPoolForRuntimeWrite(dsn)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "MySQL 连接或表结构初始化失败: " + err.Error()})
+				return
+			}
+			if d != nil {
+				defer d.Close()
+				mysqlWrite = d
+			}
+		}
+		if _, err := dialRedisLight(tmpCfg); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Redis 连接失败，请检查地址、密码与网络: " + err.Error()})
 			return
+		}
+		rs.BaotaSSLPemContent = ""
+		rs.BaotaSSLKeyContent = ""
+		if err := SaveRuntimeSettingsUnified(path, mysqlWrite, rs); err != nil {
+			RespondAPIError500(c, "写入配置失败: " + err.Error())
+			return
+		}
+		if incomingBaotaSSLPemContent != "" || incomingBaotaSSLKeyContent != "" {
+			if err := saveStoredBaotaSSLMaterial(app, tmpCfg, incomingBaotaSSLPemContent, incomingBaotaSSLKeyContent); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "保存宝塔 HTTPS 证书失败: " + err.Error()})
+				return
+			}
 		}
 		if err := app.Reload(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "重载配置失败: " + err.Error()})
+			RespondAPIError500(c, "重载配置失败: " + err.Error())
 			return
 		}
+		InvalidateRuntimeStatusCache(context.Background(), app)
+		InvalidateVCenterPrometheusCache(context.Background(), app)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "初始化完成"})
 	}
 }
@@ -127,9 +161,25 @@ func validateSetupPayload(rs *RuntimeSettings, plainPwd string) error {
 		return errors.New("dashboardPasswordPlain 长度至少 8 位")
 	}
 	if rs.IngressBaotaSyncEnabled {
-		if strings.TrimSpace(rs.BaotaURL) == "" || strings.TrimSpace(rs.BaotaAPIKey) == "" {
-			return errors.New("开启 ingressBaotaSyncEnabled 时需填写 baotaUrl 与 baotaApiKey")
+		ok := strings.TrimSpace(rs.BaotaURL) != "" && strings.TrimSpace(rs.BaotaAPIKey) != ""
+		if len(rs.BaotaTargets) > 0 {
+			ok = false
+			for _, t := range rs.BaotaTargets {
+				if strings.TrimSpace(t.URL) != "" && strings.TrimSpace(t.ApiKey) != "" {
+					ok = true
+					break
+				}
+			}
 		}
+		if !ok {
+			return errors.New("开启 ingressBaotaSyncEnabled 时需填写 baotaUrl 与 baotaApiKey，或在 baotaTargets 中至少配置一条含 url 与 apiKey 的实例")
+		}
+	}
+	if err := validateBaotaSSLMaterialContent(rs.BaotaSSLPemContent, rs.BaotaSSLKeyContent); err != nil {
+		return err
+	}
+	if err := validateBaotaSSLMaterialPaths(rs.BaotaSSLPemPath, rs.BaotaSSLKeyPath); err != nil {
+		return err
 	}
 	if rs.K8s != nil {
 		mode := strings.ToLower(strings.TrimSpace(rs.K8s.Mode))

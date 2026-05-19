@@ -6,6 +6,11 @@ metadata:
   namespace: kube-bt-sync
   labels:
     app.kubernetes.io/name: kube-bt-sync
+  annotations:
+    # 应用中心 OpenClaw 对话等长请求；默认 60s 易 504，且勿小于后端 WriteTimeout。
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "15"
 spec:
   ingressClassName: nginx
   rules:

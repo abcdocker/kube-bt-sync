@@ -11,6 +11,24 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// K8sRuntimeConfigured runtime 中已填写 incluster 或 kubeconfig（与进程是否成功创建 K8s 客户端无关）。
+func K8sRuntimeConfigured(rs *RuntimeSettings) bool {
+	if rs == nil || !rs.Initialized || rs.K8s == nil {
+		return false
+	}
+	if K8sRuntimeSkipped(rs) {
+		return false
+	}
+	mode := strings.ToLower(strings.TrimSpace(rs.K8s.Mode))
+	if mode == "incluster" {
+		return true
+	}
+	if mode == "kubeconfig" {
+		return strings.TrimSpace(rs.K8s.KubeconfigYAML) != ""
+	}
+	return false
+}
+
 // K8sRuntimeSkipped 表示用户在 runtime 中未配置集群（跳过向导 / 选「不连接」）。
 func K8sRuntimeSkipped(rs *RuntimeSettings) bool {
 	if rs == nil || !rs.Initialized {

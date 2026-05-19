@@ -54,32 +54,32 @@ func handleK8sNamespaceStats(c *gin.Context, k8s *kubernetes.Clientset) {
 
 	nsList, err := k8s.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 Namespace 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 Namespace 失败: " + err.Error())
 		return
 	}
 	podList, err := k8s.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 Pod 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 Pod 失败: " + err.Error())
 		return
 	}
 	depList, err := k8s.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 Deployment 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 Deployment 失败: " + err.Error())
 		return
 	}
 	stsList, err := k8s.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 StatefulSet 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 StatefulSet 失败: " + err.Error())
 		return
 	}
 	svcList, err := k8s.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 Service 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 Service 失败: " + err.Error())
 		return
 	}
 	pvcList, err := k8s.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "列出 PVC 失败: " + err.Error()})
+		RespondAPIError500(c, "列出 PVC 失败: " + err.Error())
 		return
 	}
 

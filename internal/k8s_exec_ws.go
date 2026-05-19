@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -47,26 +48,27 @@ func (w *wsBinaryWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func handleK8sPodExecWS(c *gin.Context, k8s *kubernetes.Clientset, restCfg *rest.Config) {
-	if !GuardK8sREST(c, k8s, restCfg) {
-		return
-	}
-	ns := c.Param("namespace")
-	name := c.Param("name")
-	container := c.Query("container")
-	shell := c.DefaultQuery("shell", "/bin/sh")
-	if container == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 query: container"})
-		return
-	}
+const k8sExecTTYTerm = "xterm-256color"
 
-	conn, err := execUpgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		log.Printf("WebSocket 升级失败: %v", err)
-		return
+// wrapExecCommandWithTTYEnv 为单 argv 的交互 shell 注入 TERM/LC_ALL，使 clear、tput、Ctrl+L 等依赖 terminfo 的行为可用。
+// 已是多参数 argv（如 redis-cli）时原样返回。
+func wrapExecCommandWithTTYEnv(command []string) []string {
+	if len(command) != 1 {
+		return command
 	}
-	defer conn.Close()
+	sh := strings.TrimSpace(command[0])
+	if sh == "" {
+		return command
+	}
+	q := sh
+	if strings.ContainsAny(sh, ` '";&|()$`) {
+		q = "'" + strings.ReplaceAll(sh, "'", `'"'"'`) + "'"
+	}
+	return []string{"/bin/sh", "-c", "export TERM=" + k8sExecTTYTerm + " LC_ALL=C.UTF-8; exec " + q}
+}
 
+// StreamK8sPodExecTTY 将 Pod exec（TTY）流式输出到 WebSocket；mergeStderr 为 true 时 stderr 与 stdout 合并（便于 redis-cli 等）。
+func StreamK8sPodExecTTY(conn *websocket.Conn, k8s *kubernetes.Clientset, restCfg *rest.Config, ns, podName, container string, command []string, mergeStderr bool) error {
 	stdinR, stdinW := io.Pipe()
 	sizes := make(chan *remotecommand.TerminalSize, 64)
 	sizes <- &remotecommand.TerminalSize{Width: 80, Height: 24}
@@ -96,15 +98,21 @@ func handleK8sPodExecWS(c *gin.Context, k8s *kubernetes.Clientset, restCfg *rest
 	}()
 
 	stdout := &wsBinaryWriter{conn: conn}
+	stderrW := io.Writer(io.Discard)
+	if mergeStderr {
+		stderrW = stdout
+	}
+
+	execCmd := wrapExecCommandWithTTYEnv(command)
 
 	req := k8s.CoreV1().RESTClient().Post().
 		Resource("pods").
-		Name(name).
+		Name(podName).
 		Namespace(ns).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container,
-			Command:   []string{shell},
+			Command:   execCmd,
 			Stdin:     true,
 			Stdout:    true,
 			Stderr:    true,
@@ -114,17 +122,41 @@ func handleK8sPodExecWS(c *gin.Context, k8s *kubernetes.Clientset, restCfg *rest
 	executor, err := remotecommand.NewSPDYExecutor(restCfg, "POST", req.URL())
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("无法创建 exec 连接: "+err.Error()))
-		return
+		return err
 	}
 
 	err = executor.Stream(remotecommand.StreamOptions{
 		Stdin:             stdinR,
 		Stdout:            stdout,
-		Stderr:            io.Discard,
+		Stderr:            stderrW,
 		Tty:               true,
 		TerminalSizeQueue: &terminalSizeQueue{ch: sizes},
 	})
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n[会话结束] "+err.Error()+"\r\n"))
 	}
+	return err
+}
+
+func handleK8sPodExecWS(c *gin.Context, k8s *kubernetes.Clientset, restCfg *rest.Config) {
+	if !GuardK8sREST(c, k8s, restCfg) {
+		return
+	}
+	ns := c.Param("namespace")
+	name := c.Param("name")
+	container := c.Query("container")
+	shell := c.DefaultQuery("shell", "/bin/sh")
+	if container == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 query: container"})
+		return
+	}
+
+	conn, err := execUpgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("WebSocket 升级失败: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	_ = StreamK8sPodExecTTY(conn, k8s, restCfg, ns, name, container, []string{shell}, false)
 }

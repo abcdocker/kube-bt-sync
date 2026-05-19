@@ -145,6 +145,7 @@ func handlePutVCenterVMSSHSettings(c *gin.Context, cfg Config, store SSHSettings
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	SetAuditDetail(c, "vCenter 虚拟机 moId="+moref+"：已更新 SSH 设置（用户 "+strings.TrimSpace(body.User)+"）")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -162,5 +163,6 @@ func handleDeleteVCenterVMSSHSettings(c *gin.Context, cfg Config, store SSHSetti
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	SetAuditDetail(c, "vCenter 虚拟机 moId="+moref+"：已清除 SSH 凭据")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/performance"
@@ -45,30 +46,6 @@ var vmDiskNetRealtimeNames = []string{
 	"net.transmitted.average",
 	"net.bytesRx.average",
 	"net.bytesTx.average",
-}
-
-// hostPerfCounterNames ESXi 宿主机历史性能（含 datastore / net 备选，避免磁盘与网络仅按实例名暴露时无数据）
-var hostPerfCounterNames = []string{
-	"cpu.usage.average",
-	"mem.usage.average",
-	"disk.read.average",
-	"disk.write.average",
-	"datastore.read.average",
-	"datastore.write.average",
-	"net.received.average",
-	"net.transmitted.average",
-	"net.bytesRx.average",
-	"net.bytesTx.average",
-}
-
-// hostDiskNetRealtimeNames 仅用于实时回退（近 1 小时）
-var hostDiskNetRealtimeNames = []string{
-	"disk.read.average",
-	"disk.write.average",
-	"datastore.read.average",
-	"datastore.write.average",
-	"net.received.average",
-	"net.transmitted.average",
 }
 
 // pickHistoricalSamplingPeriod 从 vCenter 已启用的历史统计档位中选「保留时长 ≥ 查询跨度」且粒度最细的一档。
@@ -580,67 +557,71 @@ func handleVCenterVMsPerfSnapshot(c *gin.Context, vc *vCenterClient) {
 		return
 	}
 	ctx := c.Request.Context()
-	client, err := vc.getClient(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	f := find.NewFinder(client.Client, true)
-	dcs, err := f.DatacenterList(ctx, "*")
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "列出数据中心失败: " + err.Error()})
-		return
-	}
-	pm := performance.NewManager(client.Client)
-	infoByName, err := pm.CounterInfoByName(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "读取性能计数器定义失败: " + err.Error()})
-		return
-	}
-
 	type job struct {
 		ref   types.ManagedObjectReference
 		moref string
 	}
 	var jobs []job
-	for _, dc := range dcs {
-		f.SetDatacenter(dc)
-		vms, err := f.VirtualMachineList(ctx, "*")
-		if err != nil {
-			continue
-		}
-		for _, vm := range vms {
-			ref := vm.Reference()
-			jobs = append(jobs, job{ref: ref, moref: ref.Value})
-		}
-	}
-
 	rates := gin.H{}
-	var mu sync.Mutex
-	sem := make(chan struct{}, 12)
-	var wg sync.WaitGroup
-	for _, j := range jobs {
-		j := j
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			row := queryVMDiskNetLatestPoint(ctx, pm, infoByName, j.ref)
-			mu.Lock()
-			rates[j.moref] = row
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-
 	var probe gin.H
-	if len(jobs) > 0 {
-		probe = diagnoseVMDiskNetSnapshot(ctx, pm, infoByName, jobs[0].ref, jobs[0].moref)
-		if p, ok := probe["chosen"].(string); ok {
-			log.Printf("[vcenter] perf-snapshot probe moref=%s chosen=%s historicalOk=%v realtimeOk=%v histSamples=%v rtSamples=%v",
-				jobs[0].moref, p, probe["historicalOk"], probe["realtimeOk"], probe["historicalSamples"], probe["realtimeSamples"])
+	err := vc.WithClientRetry(ctx, func(client *govmomi.Client) error {
+		jobs = nil
+		f := find.NewFinder(client.Client, true)
+		dcs, err := f.DatacenterList(ctx, "*")
+		if err != nil {
+			return err
 		}
+		pm := performance.NewManager(client.Client)
+		infoByName, err := pm.CounterInfoByName(ctx)
+		if err != nil {
+			return fmt.Errorf("读取性能计数器定义失败: %w", err)
+		}
+		for _, dc := range dcs {
+			f.SetDatacenter(dc)
+			vms, err := f.VirtualMachineList(ctx, "*")
+			if err != nil {
+				continue
+			}
+			for _, vm := range vms {
+				ref := vm.Reference()
+				jobs = append(jobs, job{ref: ref, moref: ref.Value})
+			}
+		}
+		rates = gin.H{}
+		var mu sync.Mutex
+		sem := make(chan struct{}, 12)
+		var wg sync.WaitGroup
+		for _, j := range jobs {
+			j := j
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				row := queryVMDiskNetLatestPoint(ctx, pm, infoByName, j.ref)
+				mu.Lock()
+				rates[j.moref] = row
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+		probe = nil
+		if len(jobs) > 0 {
+			probe = diagnoseVMDiskNetSnapshot(ctx, pm, infoByName, jobs[0].ref, jobs[0].moref)
+			if p, ok := probe["chosen"].(string); ok {
+				log.Printf("[vcenter] perf-snapshot probe moref=%s chosen=%s historicalOk=%v realtimeOk=%v histSamples=%v rtSamples=%v",
+					jobs[0].moref, p, probe["historicalOk"], probe["realtimeOk"], probe["historicalSamples"], probe["realtimeSamples"])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "读取性能计数器定义失败") {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "列出数据中心失败: " + err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -941,265 +922,3 @@ func handleVCenterVMMetrics(c *gin.Context, vc *vCenterClient) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// handleVCenterHostMetrics ESXi 宿主机历史性能（与虚拟机接口字段一致，便于前端复用图表）。
-func handleVCenterHostMetrics(c *gin.Context, vc *vCenterClient) {
-	if !vc.cfg.vCenterConfigured() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "vCenter 未配置"})
-		return
-	}
-	moref := strings.TrimSpace(c.Param("moref"))
-	days, _ := strconv.Atoi(strings.TrimSpace(c.Query("days")))
-	if days < 1 {
-		days = 7
-	}
-	if days > 7 {
-		days = 7
-	}
-
-	ctx := c.Request.Context()
-	client, err := vc.getClient(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	hs := object.NewHostSystem(client.Client, types.ManagedObjectReference{Type: "HostSystem", Value: moref})
-	var exists mo.HostSystem
-	if err := hs.Properties(ctx, hs.Reference(), []string{"name"}, &exists); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "宿主机不存在或无权访问: " + err.Error()})
-		return
-	}
-
-	pm := performance.NewManager(client.Client)
-
-	prov, err := pm.ProviderSummary(ctx, hs.Reference())
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "QueryPerfProviderSummary 失败: " + err.Error()})
-		return
-	}
-
-	histIntervals, err := pm.HistoricalInterval(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "读取 HistoricalInterval 失败: " + err.Error()})
-		return
-	}
-	interval, intervalHint := pickHistoricalSamplingPeriod(histIntervals, days)
-
-	infoByName, err := pm.CounterInfoByName(ctx)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "读取性能计数器定义失败: " + err.Error()})
-		return
-	}
-
-	avail, errAvail := pm.AvailableMetric(ctx, hs.Reference(), interval)
-	if errAvail != nil {
-		avail = nil
-	}
-
-	metricIDs, missing := expandPerfMetricIDs(infoByName, avail, hostPerfCounterNames)
-	var metricIDsFallback []types.PerfMetricId
-	for _, name := range hostPerfCounterNames {
-		ci, ok := infoByName[name]
-		if !ok {
-			continue
-		}
-		metricIDsFallback = append(metricIDsFallback,
-			types.PerfMetricId{CounterId: ci.Key, Instance: ""},
-			types.PerfMetricId{CounterId: ci.Key, Instance: "*"},
-		)
-	}
-	if len(metricIDs) == 0 {
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":   "未找到所需性能计数器（请确认 vCenter 版本与权限）",
-			"missing": missing,
-		})
-		return
-	}
-
-	end := time.Now().UTC()
-	start := end.AddDate(0, 0, -days)
-
-	raw, err := queryPerfEntity(ctx, pm, hs.Reference(), metricIDs, metricIDsFallback, start, end, interval)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	emList, err := pm.ToMetricSeries(ctx, raw)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解析性能序列失败: " + err.Error()})
-		return
-	}
-
-	noteParts := []string{
-		fmt.Sprintf("历史档位: %s，rollup %ds（宿主机）。", intervalHint, interval),
-	}
-	if errAvail != nil {
-		noteParts = append(noteParts, fmt.Sprintf("QueryAvailablePerfMetric 失败（%v），磁盘/网络可能无法展开实例。", errAvail))
-	}
-	if prov != nil && !prov.SummarySupported {
-		noteParts = append(noteParts, "该对象 SummarySupported=false，可能无历史统计。")
-	}
-
-	if len(emList) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"moref":       moref,
-			"days":        days,
-			"rangeFrom":   start.Format(time.RFC3339),
-			"rangeTo":     end.Format(time.RFC3339),
-			"intervalSec": interval,
-			"series":      gin.H{},
-			"units":       gin.H{},
-			"missing":     missing,
-			"note": strings.Join(noteParts, "") + " QueryPerf 未返回实体指标。请在 vCenter「设置 → 常规 → 统计信息」提高统计级别并确认已启用 Past Day / Past Week 等间隔。",
-		})
-		return
-	}
-
-	emEnt := &emList[0]
-	if len(emEnt.SampleInfo) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"moref":       moref,
-			"days":        days,
-			"rangeFrom":   start.Format(time.RFC3339),
-			"rangeTo":     end.Format(time.RFC3339),
-			"intervalSec": interval,
-			"series":      gin.H{},
-			"units":       gin.H{},
-			"missing":     missing,
-			"note":        strings.Join(noteParts, "") + " 采样点为空，请检查统计级别与历史间隔是否启用。",
-		})
-		return
-	}
-
-	byName, ts := aggregatePerfEntityMetric(emEnt, infoByName)
-	if byName == nil {
-		byName = make(map[string]*perfAggBucket)
-	}
-
-	cpuPts := perfSeriesPointsGin(ts, byName, "cpu.usage.average")
-	memPts := perfSeriesPointsGin(ts, byName, "mem.usage.average")
-	diskRead := seriesPointsPreferHost(ts, byName, "disk.read.average", "datastore.read.average")
-	diskWrite := seriesPointsPreferHost(ts, byName, "disk.write.average", "datastore.write.average")
-	netRx := seriesPointsPreferHost(ts, byName, "net.received.average", "net.bytesRx.average")
-	netTx := seriesPointsPreferHost(ts, byName, "net.transmitted.average", "net.bytesTx.average")
-
-	usedRealtime := false
-	var rtFrom, rtTo time.Time
-	var rtInterval int32
-	var byRT map[string]*perfAggBucket
-
-	diskNetEmpty := len(diskRead) == 0 && len(diskWrite) == 0 && len(netRx) == 0 && len(netTx) == 0
-	if diskNetEmpty && prov != nil && prov.CurrentSupported {
-		refreshRate := prov.RefreshRate
-		if refreshRate <= 0 {
-			refreshRate = 20
-		}
-		endRT := time.Now().UTC()
-		startRT := endRT.Add(-1 * time.Hour)
-		availRT, errAvailRT := pm.AvailableMetric(ctx, hs.Reference(), refreshRate)
-		if errAvailRT != nil {
-			availRT = nil
-		}
-		mIDsRT, _ := expandPerfMetricIDs(infoByName, availRT, hostDiskNetRealtimeNames)
-		var fbRT []types.PerfMetricId
-		for _, name := range hostDiskNetRealtimeNames {
-			ci, ok := infoByName[name]
-			if !ok {
-				continue
-			}
-			fbRT = append(fbRT,
-				types.PerfMetricId{CounterId: ci.Key, Instance: ""},
-				types.PerfMetricId{CounterId: ci.Key, Instance: "*"},
-			)
-		}
-		if len(mIDsRT) == 0 {
-			mIDsRT = fbRT
-		}
-		if len(mIDsRT) > 0 {
-			rawRT, errRT := queryPerfEntity(ctx, pm, hs.Reference(), mIDsRT, fbRT, startRT, endRT, refreshRate)
-			if errRT == nil && perfHasSamples(rawRT) {
-				emRTList, err2 := pm.ToMetricSeries(ctx, rawRT)
-				if err2 == nil && len(emRTList) > 0 && len(emRTList[0].SampleInfo) > 0 {
-					byRT, tsRT := aggregatePerfEntityMetric(&emRTList[0], infoByName)
-					if byRT != nil {
-						diskRead = seriesPointsPreferHost(tsRT, byRT, "disk.read.average", "datastore.read.average")
-						diskWrite = seriesPointsPreferHost(tsRT, byRT, "disk.write.average", "datastore.write.average")
-						netRx = seriesPointsPreferHost(tsRT, byRT, "net.received.average", "net.bytesRx.average")
-						netTx = seriesPointsPreferHost(tsRT, byRT, "net.transmitted.average", "net.bytesTx.average")
-						if len(diskRead) > 0 || len(diskWrite) > 0 || len(netRx) > 0 || len(netTx) > 0 {
-							usedRealtime = true
-							rtFrom = startRT
-							rtTo = endRT
-							rtInterval = refreshRate
-							noteParts = append(noteParts,
-								"磁盘/网络曲线使用近 1 小时实时统计（历史归档中无有效磁盘/网络计数或统计级别不足时自动回退）。",
-							)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	diskReadUnit := unitKeyPreferHost(byName, "disk.read.average", "datastore.read.average")
-	diskWriteUnit := unitKeyPreferHost(byName, "disk.write.average", "datastore.write.average")
-	netRxUnit := unitKeyPreferHost(byName, "net.received.average", "net.bytesRx.average")
-	netTxUnit := unitKeyPreferHost(byName, "net.transmitted.average", "net.bytesTx.average")
-	if usedRealtime && byRT != nil {
-		diskReadUnit = unitKeyPreferHost(byRT, "disk.read.average", "datastore.read.average")
-		diskWriteUnit = unitKeyPreferHost(byRT, "disk.write.average", "datastore.write.average")
-		netRxUnit = unitKeyPreferHost(byRT, "net.received.average", "net.bytesRx.average")
-		netTxUnit = unitKeyPreferHost(byRT, "net.transmitted.average", "net.bytesTx.average")
-	}
-
-	series := gin.H{
-		"cpu":       cpuPts,
-		"memory":    memPts,
-		"diskRead":  diskRead,
-		"diskWrite": diskWrite,
-		"netRx":     netRx,
-		"netTx":     netTx,
-	}
-	units := gin.H{
-		"cpu":       perfUnitKeyFromBucket(byName, "cpu.usage.average"),
-		"memory":    perfUnitKeyFromBucket(byName, "mem.usage.average"),
-		"diskRead":  diskReadUnit,
-		"diskWrite": diskWriteUnit,
-		"netRx":     netRxUnit,
-		"netTx":     netTxUnit,
-	}
-
-	hasAny := false
-	for _, k := range []string{"cpu", "memory", "diskRead", "diskWrite", "netRx", "netTx"} {
-		if s, ok := series[k].([]gin.H); ok && len(s) > 0 {
-			hasAny = true
-			break
-		}
-	}
-	if !hasAny {
-		noteParts = append(noteParts,
-			"所选计数器无有效采样：请提高 vCenter「设置 → 常规 → 统计信息」级别（磁盘≥2、网络≥3/4），并确认主机已运行一段时间。",
-		)
-	}
-
-	resp := gin.H{
-		"moref":       moref,
-		"days":        days,
-		"rangeFrom":   start.Format(time.RFC3339),
-		"rangeTo":     end.Format(time.RFC3339),
-		"intervalSec": interval,
-		"series":      series,
-		"units":       units,
-		"missing":     missing,
-		"note": strings.Join(noteParts, "") + " CPU/内存为平均占用率；磁盘/网络优先 disk.*，无则 datastore.*；网络优先 net.received/transmitted，无则 net.bytesRx/bytesTx；单位为 vSphere 返回单位（多为 KB/s）。",
-	}
-	if usedRealtime {
-		resp["diskNetRealtime"] = gin.H{
-			"rangeFrom":   rtFrom.Format(time.RFC3339),
-			"rangeTo":     rtTo.Format(time.RFC3339),
-			"intervalSec": rtInterval,
-		}
-	}
-	c.JSON(http.StatusOK, resp)
-}

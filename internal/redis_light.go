@@ -98,6 +98,61 @@ func (r *RedisLight) Get(ctx context.Context, key string) (string, error) {
 	return readBulkString(cr.br)
 }
 
+// Del 删除键（可多个）；键名为空时跳过。
+func (r *RedisLight) Del(ctx context.Context, keys ...string) error {
+	var nonEmpty []string
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			nonEmpty = append(nonEmpty, k)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return nil
+	}
+	c, err := r.conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	cr := c.(*connReader)
+	args := append([]string{"DEL"}, nonEmpty...)
+	if err := r.writeArgs(c, args...); err != nil {
+		return err
+	}
+	_, err = readIntegerReply(cr.br)
+	return err
+}
+
+// Incr 原子自增；键不存在时从 1 开始。
+func (r *RedisLight) Incr(ctx context.Context, key string) (int64, error) {
+	c, err := r.conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	cr := c.(*connReader)
+	if err := r.writeArgs(c, "INCR", key); err != nil {
+		return 0, err
+	}
+	return readIntegerReply(cr.br)
+}
+
+func readIntegerReply(br *bufio.Reader) (int64, error) {
+	line, err := br.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "-") {
+		return 0, errors.New(strings.TrimPrefix(line, "-"))
+	}
+	if strings.HasPrefix(line, ":") {
+		return strconv.ParseInt(strings.TrimPrefix(line, ":"), 10, 64)
+	}
+	return 0, fmt.Errorf("unexpected redis integer: %s", line)
+}
+
 func (r *RedisLight) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	c, err := r.conn(ctx)
 	if err != nil {

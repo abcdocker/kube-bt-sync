@@ -127,6 +127,11 @@ func AuditClientIP(c *gin.Context, cfg Config) string {
 }
 
 // configureGinTrustedProxies：gin.Default() 默认信任 0.0.0.0/0，易被伪造 XFF；此处默认改为不信任，仅当配置 env 后启用。
+func isPrometheusQueryAuditPath(path string) bool {
+	p := strings.TrimSpace(path)
+	return strings.HasPrefix(p, "/api/prometheus/query") // /query 与 /query_range
+}
+
 func configureGinTrustedProxies(r *gin.Engine, cfg Config) {
 	list, _ := parseTrustedProxyStrings(cfg.DashboardTrustedProxies)
 	if len(list) == 0 {
@@ -141,8 +146,15 @@ func configureGinTrustedProxies(r *gin.Engine, cfg Config) {
 	}
 }
 
-func shouldPersistAuditPath(path string) bool {
+// shouldPersistAPIAudit 仅将「写操作」写入 audit.jsonl，避免把大量 GET 查询刷满文件。
+// 登录/登出/登录失败仍由 auth 等处理器单独 AppendAuditRecord。
+func shouldPersistAPIAudit(c *gin.Context) bool {
+	path := c.Request.URL.Path
 	if !strings.HasPrefix(path, "/api/") {
+		return false
+	}
+	// PromQL 查询为高频自动化请求，不写入审计文件、不出现在通知铃铛
+	if isPrometheusQueryAuditPath(path) {
 		return false
 	}
 	switch path {
@@ -150,7 +162,12 @@ func shouldPersistAuditPath(path string) bool {
 		"/api/auth/login", "/api/auth/logout":
 		return false
 	default:
+	}
+	switch strings.ToUpper(c.Request.Method) {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
+	default:
+		return false
 	}
 }
 
@@ -164,7 +181,7 @@ func auditAccessLogMiddleware(app *ServerApp) gin.HandlerFunc {
 		ms := time.Since(start).Milliseconds()
 		user := "-"
 		if cfg.DashboardAuthEnabled() {
-			if u, ok := sessionUserFromCookie(c, cfg); ok && strings.TrimSpace(u) != "" {
+			if u, ok := sessionUserFromCookie(c, cfg, app); ok && strings.TrimSpace(u) != "" {
 				user = u
 			}
 		}
@@ -172,12 +189,22 @@ func auditAccessLogMiddleware(app *ServerApp) gin.HandlerFunc {
 		if route == "" {
 			route = path
 		}
+		if strings.HasPrefix(path, "/api/") || path == "/" || strings.HasPrefix(path, "/account") || strings.HasPrefix(path, "/cluster") || strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/setup") {
+			RecordSiteAccess(route, ip)
+		}
+		auditSecurityProbeIfNeeded(c, app)
 		if cfg.DashboardAccessLog {
 			log.Printf("access ip=%s user=%s %s %s => %d %dms",
 				ip, user, c.Request.Method, route, c.Writer.Status(), ms)
 		}
-		if shouldPersistAuditPath(path) {
-			AppendAuditRecord(app.DataDir(), AuditRecord{
+		if shouldPersistAPIAudit(c) {
+			detail := ""
+			if v, ok := c.Get(ginAuditDetailKey); ok {
+				if s, ok := v.(string); ok {
+					detail = strings.TrimSpace(s)
+				}
+			}
+			rec := AuditRecord{
 				Action:     "api",
 				IP:         ip,
 				User:       user,
@@ -185,7 +212,40 @@ func auditAccessLogMiddleware(app *ServerApp) gin.HandlerFunc {
 				Path:       route,
 				Status:     c.Writer.Status(),
 				DurationMs: ms,
+				Detail:     detail,
+			}
+			go AppendAuditRecord(app, rec)
+		}
+	}
+}
+
+func auditSecurityProbeIfNeeded(c *gin.Context, app *ServerApp) {
+	if app == nil {
+		return
+	}
+	cfg := app.Cfg()
+	ip := AuditClientIP(c, cfg)
+	raw := c.Request.URL.Path
+	if q := c.Request.URL.RawQuery; q != "" {
+		raw = raw + "?" + q
+	}
+	lower := strings.ToLower(raw)
+	patterns := []string{
+		"union select", "or 1=1", "' or ", "1;drop", "sleep(", "benchmark(",
+		"information_schema", "/etc/passwd", "..%2f", "..%5c", "cmd.exe", "wget%20", "curl%20",
+		"select%20", "insert%20", "drop%20table", "exec(", "script>",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			go AppendAuditRecord(app, AuditRecord{
+				Action: "security_probe",
+				IP:     ip,
+				Method: c.Request.Method,
+				Path:   c.Request.URL.Path,
+				Status: c.Writer.Status(),
+				Detail: "疑似扫描或注入探测: " + p,
 			})
+			return
 		}
 	}
 }

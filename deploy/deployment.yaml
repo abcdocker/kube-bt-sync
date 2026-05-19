@@ -1,3 +1,16 @@
+# 部署顺序见仓库根目录 README「Kubernetes 部署顺序」。
+# 1) 先创建 namespace / rbac / pvc / secret
+# 2) 将下面 image 改为你的镜像仓库
+# 3) 敏感环境变量建议用 Secret（参考 secret-example.yaml）通过 envFrom 注入
+#
+# 多副本与性能（底层说明）：
+# - 单 Pod 内仅 1 个 Go 进程；横向扩展请提高 replicas，并用 Service 负载均衡。
+# - 每个 Pod 会跑全套后台协程；多副本时务必仅 1 个 Pod 保持 KUBEBT_ENABLE_BACKGROUND_JOBS=true（默认），
+#   其余副本设 KUBEBT_ENABLE_BACKGROUND_JOBS=false，否则宝塔 Ingress 同步、告警巡检、出站通知、审计裁剪等会重复执行。
+# - 登录失败限流等仍有一部分进程内内存状态，多副本下阈值按 Pod 分散；生产建议前置统一 WAF/网关限流。
+# - 会话 nonce 在 MySQL platform_kv 时多副本可共享；若仅用文件 KV+共享 PVC，须注意并发写（推荐 MySQL）。
+# - KUBEBT_GOMAXPROCS 建议与 resources.limits.cpu 整核数一致（如 limits.cpu: "2" 则设 KUBEBT_GOMAXPROCS=2）。
+# - KUBEBT_PERFORMANCE_MODE=true 时 Gin 走 release 模式并启用命名空间列表 Redis 短缓存（需 Redis）。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +19,7 @@ metadata:
   labels:
     app.kubernetes.io/name: kube-bt-sync
 spec:
+  # 多副本示例：replicas: 3，且仅其中 1 个 Pod 不要设置 KUBEBT_ENABLE_BACKGROUND_JOBS=false，其余为 false。
   replicas: 1
   selector:
     matchLabels:
@@ -23,19 +37,29 @@ spec:
         runAsGroup: 65532
       containers:
         - name: kube-bt-sync
-          image: ghcr.io/OWNER/kube-bt-sync:latest
+          image: your-registry/kube-bt-sync:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: TZ
+              value: "Asia/Shanghai"
             # 可选：首次部署前也可通过 Web /setup 写入；此处用于无人值守或 CI
             - name: KUBEBT_DATA_DIR
               value: "/data"
+            # 与 limits.cpu 对齐，避免 P 线程数大于 cgroup 配额
+            # - name: KUBEBT_GOMAXPROCS
+            #   value: "2"
+            # 多副本时额外 Pod 设为 false
+            # - name: KUBEBT_ENABLE_BACKGROUND_JOBS
+            #   value: "false"
+            # - name: KUBEBT_PERFORMANCE_MODE
+            #   value: "true"
             # 示例：宝塔与 DDNS（建议用 Secret 引用，勿直接写密钥）
             # - name: BAOTA_URL
-            #   value: "http://你的云主机:面板端口"
+            #   value: "http://你的公网IP:宝塔面板端口"
             # - name: BAOTA_API_KEY
             #   valueFrom:
             #     secretKeyRef:
