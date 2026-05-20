@@ -6,8 +6,8 @@ app:
     enableBackgroundJobs: true
     performanceMode: false
   image:
-    repository: harbor.frps.cn/kube-bt-sync
-    tag: v2.0.0
+    repository: harbor.frps.cn/kube-bt-sync-main/v1
+    tag: v1.0.0
     pullPolicy: IfNotPresent
     # 私有仓库拉取密钥（可选）
     pullSecret: ""
