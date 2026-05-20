@@ -12,13 +12,6 @@ on:
         default: 'v1.0.0'
 
 env:
-  # ------------------------------------------------------------------------------
-  # 代理配置（仅在 self-hosted runner 或本地环境中有效）
-  # GitHub 官方 runner 无法访问 127.0.0.1:7890，如需使用请配置 self-hosted runner
-  # ------------------------------------------------------------------------------
-  https_proxy: http://127.0.0.1:7890
-  http_proxy: http://127.0.0.1:7890
-  all_proxy: http://127.0.0.1:7890
   # Harbor 配置
   HARBOR_REGISTRY: harbor.frps.cn
   IMAGE_NAME: kube-bt-sync-main/v1
@@ -53,7 +46,12 @@ jobs:
         with:
           go-version: '1.25'
 
+      # 代理仅在本步骤生效，不影响 actions/checkout 等官方 Action
       - name: Build multi-platform binaries
+        env:
+          https_proxy: ${{ vars.HTTPS_PROXY }}
+          http_proxy: ${{ vars.HTTP_PROXY }}
+          all_proxy: ${{ vars.ALL_PROXY }}
         run: |
           VERSION="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           mkdir -p dist
@@ -71,7 +69,7 @@ jobs:
           ls -la dist/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || github.event.inputs.tag }}
           files: dist/*
@@ -106,8 +104,13 @@ jobs:
           TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
+      # 代理仅在本步骤生效
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        env:
+          https_proxy: ${{ vars.HTTPS_PROXY }}
+          http_proxy: ${{ vars.HTTP_PROXY }}
+          all_proxy: ${{ vars.ALL_PROXY }}
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
