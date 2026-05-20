@@ -287,3 +287,41 @@
   tab-size: 4;
   border-radius: 0 !important;
 }
+
+/* =============================================================================
+   修复：ByteMD 状态栏固定在编辑器底部，避免被 CodeMirror min-height 挤到中间
+   ============================================================================= */
+
+/* 1. 移除 CodeMirror 的最小高度限制，避免占用页面一半 */
+.md-editor-root .bytemd-editor .CodeMirror-wrap,
+.md-editor-root .bytemd-editor .CodeMirror,
+.md-editor-root .bytemd-editor .CodeMirror-scroll {
+  min-height: 0 !important;
+}
+
+/* 2. 确保 bytemd-body 占满剩余空间，不溢出 */
+.md-editor-root .bytemd-body {
+  overflow: hidden !important;
+}
+
+/* 3. 编辑器与预览区域正确分配高度 */
+.md-editor-root .bytemd-editor,
+.md-editor-root .bytemd-preview {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
+/* 4. 状态栏固定在底部，高度自适应内容 */
+.md-editor-root .bytemd-status {
+  flex-shrink: 0 !important;
+  height: auto !important;
+  min-height: 28px !important;
+  padding: 4px 12px !important;
+  line-height: 1.5 !important;
+  box-sizing: border-box !important;
+}
+
+/* 5. CodeMirror 内部滚动区域占满可用高度 */
+.md-editor-root .bytemd-editor .CodeMirror-lines {
+  min-height: 0 !important;
+}
