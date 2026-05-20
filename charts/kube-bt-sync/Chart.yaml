@@ -3,7 +3,7 @@ name: kube-bt-sync
 description: K8s 边缘网关同步中心 (HomeLab 专供)
 type: application
 version: 0.1.0
-appVersion: "2.0.0"
+appVersion: "v2.0.0"
 
 dependencies:
   - name: ingress-nginx

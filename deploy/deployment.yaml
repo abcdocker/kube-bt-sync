@@ -37,7 +37,7 @@ spec:
         runAsGroup: 65532
       containers:
         - name: kube-bt-sync
-          image: your-registry/kube-bt-sync:latest
+          image: harbor.frps.cn/kube-bt-sync:v2.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
