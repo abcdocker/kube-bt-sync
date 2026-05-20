@@ -63,3 +63,4 @@ charts/*/charts/
 *.crt
 *.p12
 *.pfx
+run.sh
