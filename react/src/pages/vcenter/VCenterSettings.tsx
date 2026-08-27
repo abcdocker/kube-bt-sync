@@ -3,7 +3,7 @@ import SettingsRuntimeSection from "@/pages/SettingsRuntimeSection";
 
 const VCenterSettings: React.FC = () => {
   return (
-    <div className="mx-auto max-w-4xl pb-12">
+    <div className="mx-auto max-w-4xl pb-2 sm:pb-12">
       <div className="mb-8">
         <h1 className="mb-2 text-2xl font-bold text-gray-900">vCenter 设置</h1>
         <p className="text-sm text-gray-500">

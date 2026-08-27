@@ -20,5 +20,5 @@ labels:
       app.kubernetes.io/component: kube-bt-sync
     includeSelectors: false
 
-# 单文件一键部署（含 NodePort 32080）：kubectl apply -f deploy/kube-bt-sync-all.yaml
+# 单文件通用模板（含 NodePort 32080）：kubectl apply -f deploy/kube-bt-sync-all.yaml
 # 模块化：kubectl apply -k deploy/

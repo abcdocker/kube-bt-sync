@@ -45,8 +45,21 @@ react/dist/
 # Vite / 构建缓存
 .vite/
 *.local
+.env
+.env.*
+!.env.example
 .env.local
 .env.*.local
+*.tsbuildinfo
+
+# 本地包管理器认证（项目内公开镜像配置除外）
+.npmrc
+!react/.npmrc
+
+# 本地 Kubernetes 访问凭据
+kubeconfig
+kubeconfig.*
+*.kubeconfig
 
 # Go
 go.work
@@ -63,4 +76,6 @@ charts/*/charts/
 *.crt
 *.p12
 *.pfx
-run.sh
+
+# 本地备份
+*.bak

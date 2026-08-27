@@ -53,6 +53,8 @@ func StartWebServer(ctx context.Context, app *ServerApp) {
 	})
 
 	// 无需登录：探活、初始化向导、登录态
+	r.GET("/livez", handleLiveness)
+	r.GET("/readyz", handleReadiness(app))
 	r.GET("/api/health", handleHealth(app))
 	// 文档中心：公开预览与附件直链（无需登录）
 	r.GET("/r/*rp", func(c *gin.Context) { HandleDocPublicRoute(c, app) })
@@ -205,6 +207,7 @@ func StartWebServer(ctx context.Context, app *ServerApp) {
 		api.POST("/k8s/apply-yaml", func(c *gin.Context) { handleK8sApplyYamlGeneric(c, app) })
 		api.GET("/k8s/object-yaml", func(c *gin.Context) { handleK8sGetObjectYAML(c, app.K8s()) })
 		api.GET("/k8s/object-json", func(c *gin.Context) { handleK8sGetObjectJSON(c, app.K8s()) })
+		api.GET("/k8s/secret-data", func(c *gin.Context) { handleK8sGetSecretData(c, app.K8s()) })
 		api.PUT("/k8s/object-json", func(c *gin.Context) { handleK8sPutObjectJSON(c, app) })
 		api.GET("/k8s/object-revisions", func(c *gin.Context) { handleK8sObjectRevisionsList(c, app) })
 		api.GET("/k8s/object-revisions/yaml", func(c *gin.Context) { handleK8sObjectRevisionYAML(c, app) })
@@ -613,19 +616,19 @@ func buildConfigMapResponse(app *ServerApp, role string, eff *EffectiveDashboard
 		dashDays = 7
 	}
 	out := gin.H{
-		"baotaUrl":                    cfg.BaotaURL,
-		"ddnsHost":                    cfg.DDNSHost,
-		"defaultPort":                 cfg.DefaultPort,
-		"baotaUpstreamHost":           func() string { h, _, _ := BaotaOriginTarget(cfg, nil); return h }(),
-		"baotaUpstreamPort":           func() string { _, _, p := BaotaOriginTarget(cfg, nil); return p }(),
-		"baotaUpstreamScheme":         func() string { _, s, _ := BaotaOriginTarget(cfg, nil); return s }(),
-		"httpsPort":                   httpsPort,
-		"syncIntervalSec":             int(cfg.SyncInterval.Seconds()),
-		"baotaHttpTimeoutSec":         int(cfg.BaotaHTTPTimeout.Seconds()),
-		"baotaTcpProbeTimeoutSec":     int(cfg.BaotaTCPProbeTimeout.Seconds()),
-		"baotaDisableHttpKeepalive":   cfg.BaotaDisableHTTPKeepAlive,
-		"baotaCheckMinIntervalSec":    int(cfg.BaotaCheckMinInterval.Seconds()),
-		"hasBaotaApiKey":              strings.TrimSpace(cfg.BaotaAPIKey) != "",
+		"baotaUrl":                  cfg.BaotaURL,
+		"ddnsHost":                  cfg.DDNSHost,
+		"defaultPort":               cfg.DefaultPort,
+		"baotaUpstreamHost":         func() string { h, _, _ := BaotaOriginTarget(cfg, nil); return h }(),
+		"baotaUpstreamPort":         func() string { _, _, p := BaotaOriginTarget(cfg, nil); return p }(),
+		"baotaUpstreamScheme":       func() string { _, s, _ := BaotaOriginTarget(cfg, nil); return s }(),
+		"httpsPort":                 httpsPort,
+		"syncIntervalSec":           int(cfg.SyncInterval.Seconds()),
+		"baotaHttpTimeoutSec":       int(cfg.BaotaHTTPTimeout.Seconds()),
+		"baotaTcpProbeTimeoutSec":   int(cfg.BaotaTCPProbeTimeout.Seconds()),
+		"baotaDisableHttpKeepalive": cfg.BaotaDisableHTTPKeepAlive,
+		"baotaCheckMinIntervalSec":  int(cfg.BaotaCheckMinInterval.Seconds()),
+		"hasBaotaApiKey":            strings.TrimSpace(cfg.BaotaAPIKey) != "",
 		"baotaTargets": func() []gin.H {
 			var rows []gin.H
 			for _, t := range EffectiveBaotaTargets(cfg) {
@@ -689,6 +692,9 @@ func buildConfigMapResponse(app *ServerApp, role string, eff *EffectiveDashboard
 		"vcenterWmksCssUrlFromEnv":       strings.TrimSpace(cfg.VCenterWmksCssURL) != "",
 		"vcenterVmSshConfigured":         vcenterSSHConfiguredForUI(cfg, sshStore),
 		"vcenterVmSshGlobalConfigured":   cfg.vCenterVMSshConfigured(),
+		"idracHost":                      strings.TrimSpace(cfg.IdracHost),
+		"idracVncPort":                   cfg.IdracVncPort,
+		"idracVncPassword":               cfg.IdracVncPassword,
 		"sshSettingsBackend":             string(cfg.SSHSettingsBackend),
 		"sshStoreEnabled":                sshStore != nil,
 		"sshEncryptionReady": func() bool {
@@ -818,6 +824,9 @@ func sanitizeConfigMapForViewer(h gin.H) {
 	h["sshStoreEnabled"] = false
 	h["vcenterVmSshConfigured"] = false
 	h["vcenterVmSshGlobalConfigured"] = false
+	h["idracHost"] = ""
+	h["idracVncPort"] = 0
+	h["idracVncPassword"] = ""
 	h["viewer"] = true
 }
 
@@ -858,12 +867,13 @@ func handleListAllIngresses(c *gin.Context, k8sClient *kubernetes.Clientset, cfg
 		}
 		managed := IsManagedIngress(ing.Annotations)
 		item := map[string]interface{}{
-			"namespace": ing.Namespace,
-			"name":      ing.Name,
-			"hosts":     hosts,
-			"class":     className,
-			"createdAt": ing.CreationTimestamp.Format(time.RFC3339),
-			"managed":   managed,
+			"namespace":       ing.Namespace,
+			"name":            ing.Name,
+			"hosts":           hosts,
+			"class":           className,
+			"createdAt":       ing.CreationTimestamp.Format(time.RFC3339),
+			"managed":         managed,
+			"annotationCount": len(ing.Annotations),
 		}
 		if managed {
 			targetHost, scheme, port := BaotaOriginTarget(cfg, ing.Annotations)

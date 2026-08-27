@@ -1,5 +1,6 @@
-# 一键部署（namespace kube-bt-sync）：
+# 通用模板（namespace kube-bt-sync）：
 #   kubectl apply -f deploy/kube-bt-sync-all.yaml
+# GitHub Release 附带的同名清单会自动使用当前仓库实际发布的 GHCR 镜像，推荐优先使用。
 #
 # 若私有仓库需登录拉取镜像，先创建 pull secret 再编辑 Deployment 增加 imagePullSecrets：
 #   kubectl create secret docker-registry my-registry-secret \
@@ -62,13 +63,16 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
-    verbs: ["get", "list", "watch", "delete"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]
     verbs: ["create"]
   - apiGroups: ["*"]
     resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -124,13 +128,20 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
-      # 私有 Harbor 拉取镜像时取消注释（需先创建同名 secret，见文件头说明）
+        seccompProfile:
+          type: RuntimeDefault
+      # 私有 Registry 拉取镜像时取消注释（需先创建同名 secret，见文件头说明）
       # imagePullSecrets:
       #   - name: my-registry-secret
       containers:
         - name: kube-bt-sync
-          image: harbor.frps.cn/kube-bt-sync-main/v1:v1.0.0
+          image: ghcr.io/kube-bt-sync/kube-bt-sync:v1.0.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
@@ -138,18 +149,25 @@ spec:
           env:
             - name: KUBEBT_DATA_DIR
               value: "/data"
+          # Optional: create kube-bt-sync-secrets before or after applying this manifest.
+          envFrom:
+            - secretRef:
+                name: kube-bt-sync-secrets
+                optional: true
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /livez
               port: http
             initialDelaySeconds: 15
             periodSeconds: 30
@@ -161,6 +179,8 @@ spec:
               cpu: "1"
               memory: "512Mi"
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: data
           persistentVolumeClaim:
             claimName: kube-bt-sync-data

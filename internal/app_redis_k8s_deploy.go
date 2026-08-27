@@ -67,6 +67,8 @@ type RedisK8sDeployOpts struct {
 	NodePortRedis int32
 	/** NodePortClusterBus Cluster 模式下 cluster-bus 端口的 NodePort（仅 cluster + nodeport 时有效） */
 	NodePortClusterBus int32
+	/** HostNetwork 为 true 时 Pod 使用宿主机网络命名空间（cluster 模式常用于外部直接访问） */
+	HostNetwork bool
 	/** RdbSaveLines RDB 快照规则，每行「秒 变更数」；单行 off/none 表示关闭 RDB；nil 使用 redis 默认 save */
 	RdbSaveLines []string
 	/** ImagePullSecret 本部署使用的 imagePullSecrets 名称（通常来自模版）；空则回退进程级环境变量 */

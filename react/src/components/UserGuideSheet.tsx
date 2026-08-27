@@ -485,7 +485,7 @@ function DocBody() {
       </P>
       <P>
         <strong className="text-slate-800">对外访问</strong>：① <strong>NodePort</strong>——不指定固定端口，由集群在 30000–32767 内<strong>随机分配</strong>，列表展示节点 IP + 端口形式的示例 URL。② <strong>Ingress + 宝塔</strong>——填写域名并选择{" "}
-        <Code>i4t.com/baota-sync</Code> 或 <Code>kube-bt-sync.io/baota-sync</Code>（与宝塔工作区「发布 Ingress」一致），Service 为 ClusterIP，由 Ingress 反代到网关端口 18789；登记中的对外 Base 为 <Code>https|http://域名/v1</Code>。
+        <Code>kube-bt-sync.io/baota-sync</Code>（与宝塔工作区「发布 Ingress」一致），Service 为 ClusterIP，由 Ingress 反代到网关端口 18789；登记中的对外 Base 为 <Code>https|http://域名/v1</Code>。
       </P>
       <P>
         资源包含 PVC、ConfigMap、Secret（固定键名如 <Code>OPENAI_API_KEY</Code> 等）、Deployment、Service、可选 Ingress，以及<strong>集群只读</strong> ClusterRole/Binding；部署时创建 <Code>openclaw-&lt;Deployment&gt;</Code> ServiceAccount 并绑定只读 ClusterRole。可<strong>同步到 AI 巡检</strong>（集群内 <Code>…svc.cluster.local:18789/v1</Code> + 网关 Token）。平台界面时间统一按<strong>东八区</strong>展示。

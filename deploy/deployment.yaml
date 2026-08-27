@@ -35,10 +35,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: kube-bt-sync
-          image: harbor.frps.cn/kube-bt-sync-main/v1:v1.0.0
+          image: ghcr.io/kube-bt-sync/kube-bt-sync:v1.0.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
@@ -71,18 +78,25 @@ spec:
             #   value: "38333"
             # - name: SYNC_INTERVAL_SEC
             #   value: "30"
+          # Optional: create this Secret as documented in README/deploy/secret-example.yaml.
+          envFrom:
+            - secretRef:
+                name: kube-bt-sync-secrets
+                optional: true
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /livez
               port: http
             initialDelaySeconds: 15
             periodSeconds: 30
@@ -94,6 +108,8 @@ spec:
               cpu: "1"
               memory: "512Mi"
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: data
           persistentVolumeClaim:
             claimName: kube-bt-sync-data

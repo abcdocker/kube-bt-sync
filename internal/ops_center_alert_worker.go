@@ -303,7 +303,7 @@ func sendWeCom(webhook, text string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	cli := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}}
 	resp, err := cli.Do(req)
 	if err != nil {

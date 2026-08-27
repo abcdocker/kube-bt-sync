@@ -37,7 +37,7 @@ func StartSyncer(ctx context.Context, app *ServerApp) {
 		}
 		k8s := app.K8s()
 		if k8s != nil && len(EffectiveBaotaTargets(cfg)) > 0 {
-			RunBaotaIngressSync(context.Background(), app, "timer")
+			RunBaotaIngressSync(ctx, app, "timer")
 		} else if cfg.IngressBaotaSyncEnabled {
 			log.Printf("跳过 Ingress↔宝塔同步：K8s 或宝塔未配置完整")
 		}

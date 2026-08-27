@@ -49,6 +49,9 @@ func registerAppCenterRoutes(api *gin.RouterGroup, app *ServerApp) {
 	registerOpenSearchAppCenterRoutes(api, app)
 	registerKafkaAppCenterRoutes(api, app)
 	registerDnsAppCenterRoutes(api, app)
+	registerTencentCloudAppCenterRoutes(api, app)
+	registerQiniuCloudAppCenterRoutes(api, app)
+	registerUpyunCloudAppCenterRoutes(api, app)
 }
 
 func appCenterRedisWriteDenied(c *gin.Context) bool {
@@ -782,6 +785,7 @@ type redisK8sDeployBody struct {
 	ServiceType          string `json:"serviceType,omitempty"`
 	NodePortRedis        int32  `json:"nodePortRedis,omitempty"`
 	NodePortClusterBus   int32  `json:"nodePortClusterBus,omitempty"`
+	HostNetwork          bool   `json:"hostNetwork,omitempty"`
 	/** TemplateID 已连接 MySQL 时必选，从模版中心加载镜像与拉取凭据 */
 	TemplateID int64 `json:"templateId"`
 	/** 无 MySQL 时可选：imagePullSecrets 名称 */
@@ -885,6 +889,7 @@ func handleAppRedisK8sDeploy(c *gin.Context, app *ServerApp) {
 	opts.ServiceType = strings.TrimSpace(body.ServiceType)
 	opts.NodePortRedis = body.NodePortRedis
 	opts.NodePortClusterBus = body.NodePortClusterBus
+	opts.HostNetwork = body.HostNetwork
 
 	db := app.MySQLDB()
 	if db != nil {
@@ -1001,9 +1006,13 @@ func handleAppRedisK8sDeploy(c *gin.Context, app *ServerApp) {
 		"deployment": opts.DeploymentName,
 	}
 	if len(networkSvcs) > 0 {
+		hint := "集群内使用 clusterDNS（或 ClusterIP）；NodePort 请用 任意节点 IP:nodePort 访问 Redis 端口。"
+		if opts.HostNetwork {
+			hint = "hostNetwork 模式已启用，Pod 直接使用节点网络；外部可通过「外部访问地址」中的节点 IP 直接访问 Redis 端口。"
+		}
 		out["network"] = gin.H{
 			"services": networkSvcs,
-			"hint":     "集群内使用 clusterDNS（或 ClusterIP）；NodePort 请用 任意节点 IP:nodePort 访问 Redis 端口。",
+			"hint":     hint,
 		}
 	}
 	if instanceID > 0 {

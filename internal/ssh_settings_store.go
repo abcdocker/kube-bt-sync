@@ -23,12 +23,13 @@ const (
 
 // SSHVMStored 单台虚拟机 SSH 凭据（内存态，已解密）。
 type SSHVMStored struct {
-	User            string
-	Password        string
-	PrivateKeyPEM   string
-	KeyPassphrase   string
-	Port            int
-	InsecureHostKey bool
+	User               string
+	Password           string
+	PrivateKeyPEM      string
+	KeyPassphrase      string
+	Port               int
+	InsecureHostKey    bool
+	HostKeyFingerprint string
 }
 
 func (s *SSHVMStored) hasAuth() bool {
@@ -40,12 +41,13 @@ func (s *SSHVMStored) hasAuth() bool {
 
 // sshVMRecordJSON 文件/Redis 中 JSON（敏感字段为 base64(密文)）。
 type sshVMRecordJSON struct {
-	User            string `json:"user"`
-	PasswordEnc     string `json:"p,omitempty"`
-	PrivateKeyEnc   string `json:"k,omitempty"`
-	KeyPassEnc      string `json:"kp,omitempty"`
-	Port            int    `json:"port"`
-	InsecureHostKey bool   `json:"ih"`
+	User               string `json:"user"`
+	PasswordEnc        string `json:"p,omitempty"`
+	PrivateKeyEnc      string `json:"k,omitempty"`
+	KeyPassEnc         string `json:"kp,omitempty"`
+	Port               int    `json:"port"`
+	InsecureHostKey    bool   `json:"ih"`
+	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
 }
 
 // SSHSettingsStore 按 VM moref 存取 SSH 配置。
@@ -58,12 +60,13 @@ type SSHSettingsStore interface {
 
 // sshVMPutInput 更新项：指针 nil 表示不修改该项。
 type sshVMPutInput struct {
-	User            string
-	Password        *string
-	PrivateKeyPEM   *string
-	KeyPassphrase   *string
-	Port            *int
-	InsecureHostKey *bool
+	User               string
+	Password           *string
+	PrivateKeyPEM      *string
+	KeyPassphrase      *string
+	Port               *int
+	InsecureHostKey    *bool
+	HostKeyFingerprint *string
 }
 
 type fileSSHStore struct {
@@ -102,9 +105,10 @@ func decodeSSHVMJSON(raw []byte, encKey []byte) (*SSHVMStored, error) {
 		return nil, err
 	}
 	out := &SSHVMStored{
-		User:            strings.TrimSpace(j.User),
-		Port:            j.Port,
-		InsecureHostKey: j.InsecureHostKey,
+		User:               strings.TrimSpace(j.User),
+		Port:               j.Port,
+		InsecureHostKey:    j.InsecureHostKey,
+		HostKeyFingerprint: strings.TrimSpace(j.HostKeyFingerprint),
 	}
 	if len(encKey) == 0 {
 		return out, nil
@@ -153,6 +157,9 @@ func applySSHPatch(prev *SSHVMStored, patch *sshVMPutInput) {
 	if patch.InsecureHostKey != nil {
 		prev.InsecureHostKey = *patch.InsecureHostKey
 	}
+	if patch.HostKeyFingerprint != nil {
+		prev.HostKeyFingerprint = normalizeSSHHostKeyFingerprint(*patch.HostKeyFingerprint)
+	}
 }
 
 func (s *fileSSHStore) PutVM(ctx context.Context, moref string, patch *sshVMPutInput, encKey []byte) error {
@@ -163,13 +170,14 @@ func (s *fileSSHStore) PutVM(ctx context.Context, moref string, patch *sshVMPutI
 	defer s.mu.Unlock()
 	prev, _ := s.readFileVM(moref, encKey)
 	if prev == nil {
-		prev = &SSHVMStored{Port: 22, InsecureHostKey: true}
+		prev = &SSHVMStored{Port: 22}
 	}
 	applySSHPatch(prev, patch)
 	j := sshVMRecordJSON{
-		User:            prev.User,
-		Port:            prev.Port,
-		InsecureHostKey: prev.InsecureHostKey,
+		User:               prev.User,
+		Port:               prev.Port,
+		InsecureHostKey:    prev.InsecureHostKey,
+		HostKeyFingerprint: prev.HostKeyFingerprint,
 	}
 	var err error
 	j.PasswordEnc, err = encryptSecret(encKey, prev.Password)

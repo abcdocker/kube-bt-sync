@@ -2,16 +2,17 @@ package internal
 
 import (
 	"context"
-	"database/sql"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -48,6 +49,10 @@ const (
 
 // PrepareDashboardAuth 在启用登录时解析或生成会话 HMAC 密钥。
 func PrepareDashboardAuth(cfg Config) Config {
+	if !cfg.DashboardCookieSecure &&
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.PlatformPublicURL)), "https://") {
+		cfg.DashboardCookieSecure = true
+	}
 	if !cfg.DashboardAuthEnabled() {
 		return cfg
 	}
@@ -86,6 +91,18 @@ func (c Config) OIDCConfigured() bool {
 // DashboardAuthEnabled：本地密码和/或 OIDC 任一启用即要求登录。
 func (c Config) DashboardAuthEnabled() bool {
 	return c.PasswordLoginEnabled() || c.OIDCConfigured()
+}
+
+func unauthenticatedAdminAllowed(c *gin.Context) bool {
+	if getEnvBool("KUBEBT_ALLOW_UNAUTHENTICATED_ADMIN", false) {
+		return true
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(c.Request.RemoteAddr)
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c Config) sessionMaxAge() time.Duration {
@@ -235,6 +252,12 @@ func DashboardAuthMiddleware(app *ServerApp) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cfg := app.Cfg()
 		if !cfg.DashboardAuthEnabled() {
+			if !unauthenticatedAdminAllowed(c) {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+					"error": "平台尚未配置登录认证；仅回环地址允许无认证管理。请配置 DASHBOARD_PASSWORD 或 OIDC；紧急兼容可显式设置 KUBEBT_ALLOW_UNAUTHENTICATED_ADMIN=true",
+				})
+				return
+			}
 			u := strings.TrimSpace(cfg.DashboardUser)
 			if u == "" {
 				u = "admin"
@@ -286,6 +309,25 @@ func handleAuthStatus(c *gin.Context, app *ServerApp) {
 	}
 	mysqlExtra := mysqlStatusFields(app, cfg)
 	if !cfg.DashboardAuthEnabled() {
+		if !unauthenticatedAdminAllowed(c) {
+			out := gin.H{
+				"authRequired":          true,
+				"loggedIn":              false,
+				"username":              "",
+				"role":                  "",
+				"permissions":           nil,
+				"configurationRequired": true,
+				"dashboardUsernameHint": expect,
+				"passwordLogin":         false,
+				"oidcLogin":             false,
+				"buildVersion":          sessionBuildVersionSegment(),
+			}
+			for k, v := range mysqlExtra {
+				out[k] = v
+			}
+			c.JSON(http.StatusOK, out)
+			return
+		}
 		out := gin.H{
 			"authRequired":          false,
 			"loggedIn":              true,
@@ -363,10 +405,10 @@ func mysqlStatusFields(app *ServerApp, cfg Config) map[string]interface{} {
 }
 
 type loginBody struct {
-	Username        string `json:"username"`
-	Password        string `json:"password"`
-	CaptchaId       string `json:"captchaId"`
-	CaptchaAnswer   string `json:"captchaAnswer"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	CaptchaId     string `json:"captchaId"`
+	CaptchaAnswer string `json:"captchaAnswer"`
 }
 
 func finalizePasswordLoginSession(c *gin.Context, app *ServerApp, cfg Config, username, role, ip, auditDetail string) {
@@ -414,7 +456,7 @@ func respondAfterPasswordOk(c *gin.Context, app *ServerApp, cfg Config, uname, r
 		ok, err := DashboardUserClientIPAllowed(db, ctx, uname, ip)
 		cancel()
 		if err != nil {
-			RespondAPIError500(c, "校验登录 IP 策略失败: " + err.Error())
+			RespondAPIError500(c, "校验登录 IP 策略失败: "+err.Error())
 			return
 		}
 		if !ok {
@@ -541,27 +583,6 @@ func handleAuthLogin(c *gin.Context, app *ServerApp) {
 						appendSecurityLoginBruteforceAlert(app, ip)
 					}
 					c.JSON(http.StatusUnauthorized, gin.H{"error": "账号已禁用，请重新登录"})
-					return
-				}
-				// MySQL 中已有该用户但 bcrypt 与所输密码不一致时：若仍配置了 DASHBOARD_USER / DASHBOARD_PASSWORD，
-				// 且登录名与 env 管理员一致、口令与 env 一致，则放行（接入 MySQL 后库内哈希常与历史 env 口令不同，避免「admin/原 env 密码」突然失效）。
-				expectUser := strings.TrimSpace(cfg.DashboardUser)
-				if expectUser == "" {
-					expectUser = "admin"
-				}
-				if isAdminLoginName(cfg, dbUser) && dashboardUsernameMatch(body.Username, expectUser) && dashboardPasswordOk(cfg, body.Password) {
-					role := DashboardRoleAdmin
-					ctxR, cr := context.WithTimeout(context.Background(), 8*time.Second)
-					var r string
-					if err := db.QueryRowContext(ctxR, `SELECT TRIM(role) FROM kubebt_dashboard_users WHERE username=? LIMIT 1`, dbUser).Scan(&r); err == nil {
-						if tr := strings.TrimSpace(r); tr == DashboardRoleAdmin || tr == DashboardRoleViewer {
-							role = tr
-						}
-					}
-					cr()
-					resetLoginFailures(app, ip)
-					log.Printf("login: 用户 %s 使用环境变量 DASHBOARD_PASSWORD 登录（MySQL 口令哈希与所输密码不一致，已按 env 管理员口令放行）", dbUser)
-					respondAfterPasswordOk(c, app, cfg, dbUser, role, ip, "mysql_user_env_password_fallback")
 					return
 				}
 				log.Printf("audit login fail user=%s ip=%s reason=password_or_disabled", dbUser, ip)

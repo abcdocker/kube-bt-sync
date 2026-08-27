@@ -38,7 +38,6 @@ const ClusterServices: React.FC = () => {
   const { namespace: nsEncoded } = useParams<{ namespace: string }>();
   const namespace = nsEncoded ? decodeURIComponent(nsEncoded) : "";
   const queryClient = useQueryClient();
-  if (!namespace) return null;
 
   const base = `/cluster/ns/${encodeURIComponent(namespace)}`;
 
@@ -56,6 +55,7 @@ const ClusterServices: React.FC = () => {
       apiGetJson<SvcRow[]>(
         `/api/k8s/services?namespace=${encodeURIComponent(namespace)}`
       , { signal }),
+    enabled: Boolean(namespace),
   });
 
   const applyMut = useMutation({
@@ -99,6 +99,8 @@ const ClusterServices: React.FC = () => {
       setYamlDraft(`# 加载失败: ${(e as Error).message}`);
     }
   };
+
+  if (!namespace) return null;
 
   return (
     <div className="space-y-4">

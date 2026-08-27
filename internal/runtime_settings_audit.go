@@ -102,7 +102,7 @@ func runtimeSettingsAuditSummary(cur, next *RuntimeSettings) string {
 	add("WebMKS 脚本 URL", cur.VCenterWmksScriptURL, next.VCenterWmksScriptURL)
 	add("WebMKS CSS URL", cur.VCenterWmksCssURL, next.VCenterWmksCssURL)
 	add("vCenter UI 基址", cur.VCenterUIBaseURL, next.VCenterUIBaseURL)
-	add("控制台主机", cur.VCenterConsoleHost, next.VCenterConsoleHost)
+	add("ESXi 控制台拨号地址", cur.VCenterConsoleHost, next.VCenterConsoleHost)
 	add("vCenter UI 指纹", cur.VCenterUIThumbprint, next.VCenterUIThumbprint)
 	add("VM SSH 用户", cur.VCenterVMSshUser, next.VCenterVMSshUser)
 	add("VM SSH 私钥路径", cur.VCenterVMSshPrivateKeyPath, next.VCenterVMSshPrivateKeyPath)
@@ -114,6 +114,7 @@ func runtimeSettingsAuditSummary(cur, next *RuntimeSettings) string {
 	}
 	addI("VM SSH 端口", cur.VCenterVMSshPort, next.VCenterVMSshPort)
 	addB("VM SSH 跳过主机密钥校验", cur.VCenterVMSshInsecureHostKey, next.VCenterVMSshInsecureHostKey)
+	add("VM SSH 主机密钥指纹", cur.VCenterVMSshHostKeyFingerprint, next.VCenterVMSshHostKeyFingerprint)
 	add("SSH 存储后端", cur.SSHSettingsBackend, next.SSHSettingsBackend)
 	if cur.EncryptionKey != next.EncryptionKey {
 		parts = append(parts, "加密密钥 KUBEBT_ENCRYPTION_KEY")

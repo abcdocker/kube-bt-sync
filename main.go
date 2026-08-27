@@ -44,26 +44,13 @@ func main() {
 		log.Println(">>> KUBEBT_ENABLE_BACKGROUND_JOBS=false：本进程仅作 API/Web 副本，不启动宝塔同步、告警巡检、Pod 重启关联/报告清理、出站监视、vCenter Prom 缓存刷新、审计裁剪定时器（多副本时请保证至少一个 Pod 为 true）")
 	}
 	if bg {
-		go internal.StartSyncer(ctx, app)
+		internal.StartBackgroundJobsWithLeaderElection(ctx, app)
 	}
 	internal.StartRedisReconnectLoop(ctx, app)
 	internal.StartCrossPodRuntimeSync(ctx, func() *internal.ServerApp { return app })
 	internal.StartRuntimeStatusRefresher(app)
-	if bg {
-		internal.StartHostEgressWatcher(app)
-		internal.StartVCenterPrometheusMetricsRefresher(app)
-		internal.StartK8sKubeSphereChartsCacheWatcher(app)
-		go internal.BastionNativeSSHReconcileLoop(ctx, func() *internal.ServerApp { return app })
-	}
 	internal.StartVCenterSessionKeepalive(func() *internal.ServerApp { return app })
 	internal.InitLoginSecurityState(app)
-	if bg {
-		internal.StartOpsCenterBackground(app)
-		internal.StartK8sRestartCorrelationWorker(app)
-		internal.StartOpenClawGatewayHealthWatcher(app)
-		internal.StartHarborImageIndexWorker(app)
-		internal.StartVCenterEventWorker(app)
-		internal.StartK8sControlPlaneAdvisoryWorker(ctx, app)
-	}
+	internal.StartAuditWriter(ctx)
 	internal.StartWebServer(ctx, app)
 }

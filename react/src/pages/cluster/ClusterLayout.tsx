@@ -39,6 +39,7 @@ const ClusterLayout: React.FC = () => {
     pathname === "/cluster/vcenter/dashboard" ||
     pathname === "/cluster/vcenter/gpu" ||
     pathname === "/cluster/vcenter/router" ||
+    isVCenterSection ||
     isBastionShell ||
     pathname.startsWith("/cluster/vcenter/bastion/console/") ||
     pathname.startsWith("/cluster/bastion/console/") ||
@@ -90,7 +91,7 @@ const ClusterLayout: React.FC = () => {
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-[min(100%,1600px)] px-1 pb-12 sm:px-0",
+        "mx-auto w-full max-w-[min(100%,1600px)] px-1 pb-3 sm:px-0 sm:pb-8 lg:pb-12",
         isBastionShell && "h-full min-h-0 max-w-none px-0 pb-0"
       )}
     >

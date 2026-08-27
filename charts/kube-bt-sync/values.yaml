@@ -6,13 +6,15 @@ app:
     enableBackgroundJobs: true
     performanceMode: false
   image:
-    repository: harbor.frps.cn/kube-bt-sync-main/v1
+    repository: ghcr.io/kube-bt-sync/kube-bt-sync
     tag: v1.0.0
     pullPolicy: IfNotPresent
     # 私有仓库拉取密钥（可选）
     pullSecret: ""
+  # 敏感变量统一从已有 Secret 注入；Secret key 使用 BAOTA_API_KEY、DASHBOARD_PASSWORD 等环境变量名。
+  existingSecret: ""
   service:
-    type: NodePort
+    type: ClusterIP
     port: 8080
     nodePort: 31080
   resources:
@@ -33,18 +35,20 @@ persistence:
   # 集群 StorageClass，空则使用默认
   storageClass: ""
 
+rbac:
+  # 开启后允许平台写入任意 CRD 实例；权限范围很大，仅在确实使用动态 CRD 管理时开启。
+  allowCustomResourceMutations: false
+
 # 安全与环境配置
 config:
   # 宝塔面板配置（可选，也可通过 Web /setup 配置）
   baotaUrl: ""
-  baotaApiKey: ""
   # 家庭宽带 DDNS 配置
   ddnsHost: "home.example.com"
   defaultPort: "38333"
   httpsPort: "38443"
   # Web 登录（可选）
   authUser: ""
-  authPassword: ""
 
 # ==========================================
 # 📦 底层依赖开关 (一键安装前置组件)

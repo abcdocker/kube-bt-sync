@@ -1,3 +1,6 @@
+{{- if and (gt (int .Values.app.replicaCount) 1) .Values.persistence.enabled (eq .Values.persistence.accessMode "ReadWriteOnce") }}
+{{- fail "app.replicaCount > 1 时不能共用 ReadWriteOnce PVC；请改用 ReadWriteMany、关闭本地持久化并使用 MySQL/Redis，或保持单副本" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +24,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       {{- if .Values.app.image.pullSecret }}
       imagePullSecrets:
         - name: {{ .Values.app.image.pullSecret }}
@@ -29,6 +34,11 @@ spec:
         - name: kube-bt-sync
           image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag }}"
           imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
@@ -53,10 +63,6 @@ spec:
             - name: BAOTA_URL
               value: {{ .Values.config.baotaUrl | quote }}
             {{- end }}
-            {{- if .Values.config.baotaApiKey }}
-            - name: BAOTA_API_KEY
-              value: {{ .Values.config.baotaApiKey | quote }}
-            {{- end }}
             {{- if .Values.config.ddnsHost }}
             - name: DDNS_HOST
               value: {{ .Values.config.ddnsHost | quote }}
@@ -73,27 +79,35 @@ spec:
             {{- if .Values.config.authUser }}
             - name: DASHBOARD_USER
               value: {{ .Values.config.authUser | quote }}
-            - name: DASHBOARD_PASSWORD
-              value: {{ .Values.config.authPassword | quote }}
             {{- end }}
+          {{- if .Values.app.existingSecret }}
+          # Secret 中使用环境变量名作为 key，例如 BAOTA_API_KEY、DASHBOARD_PASSWORD、VCENTER_PASSWORD。
+          envFrom:
+            - secretRef:
+                name: {{ .Values.app.existingSecret | quote }}
+          {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /livez
               port: http
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:

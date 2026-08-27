@@ -341,7 +341,7 @@ const SettingsRuntimeSection: React.FC<SettingsRuntimeSectionProps> = ({
               <p className="text-sm font-semibold text-amber-950">多宝塔实例（企业版 / 多节点）</p>
               <p className="text-[11px] leading-relaxed text-gray-600">
                 非空时以本列表为准；Ingress 可加注解 <code className="rounded bg-white px-0.5 font-mono text-[10px]">kube-bt-sync.io/baota-target</code> 或{" "}
-                <code className="rounded bg-white px-0.5 font-mono text-[10px]">i4t.com/baota-target</code> 指定实例 id。未注解则同步到「默认」实例。留空本列表则只用下方{" "}
+                <code className="rounded bg-white px-0.5 font-mono text-[10px]">kube-bt-sync.io/baota-target</code> 指定实例 id。未注解则同步到「默认」实例。留空本列表则只用下方{" "}
                 <span className="font-mono">baotaUrl</span> / <span className="font-mono">baotaApiKey</span>。
               </p>
               {btTargets.map((row, idx) => (
@@ -1300,6 +1300,22 @@ const SettingsRuntimeSection: React.FC<SettingsRuntimeSectionProps> = ({
                 onChange={(e) => setField("vcenterUrl", e.target.value)}
               />
             </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>ESXi 控制台地址（可选）</Label>
+              <Input
+                className="font-mono text-xs"
+                value={String(form.vcenterConsoleHost ?? "")}
+                onChange={(e) => setField("vcenterConsoleHost", e.target.value)}
+                placeholder="192.168.21.101"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="text-[11px] text-gray-500">
+                当 WebMKS 票据返回的 ESXi 主机名无法被 Kubernetes DNS 解析时填写管理 IP，可附带端口，例如
+                <code className="ml-1 rounded bg-gray-100 px-1">192.168.21.101:443</code>。平台仅覆盖底层 TCP
+                拨号地址，WebSocket Host 与认证仍使用 vCenter 签发的一次性票据，不需要保存 ESXi 密码。
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>vcenterUser</Label>
               <Input
@@ -1406,6 +1422,19 @@ const SettingsRuntimeSection: React.FC<SettingsRuntimeSectionProps> = ({
                   spellCheck={false}
                 />
               </div>
+              <div className="space-y-2">
+                <Label>SSH 主机密钥指纹</Label>
+                <Input
+                  className="font-mono text-xs"
+                  value={String(form.vcenterVmSshHostKeyFingerprint ?? "")}
+                  onChange={(e) => setField("vcenterVmSshHostKeyFingerprint", e.target.value)}
+                  placeholder="SHA256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  spellCheck={false}
+                />
+                <p className="text-[11px] text-gray-500">
+                  可在可信网络执行 <code>ssh-keyscan 主机 | ssh-keygen -lf -</code> 核对后填写。
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1478,8 +1507,32 @@ const SettingsRuntimeSection: React.FC<SettingsRuntimeSectionProps> = ({
                   onCheckedChange={(v) => setField("idracInsecure", v)}
                 />
               </div>
+              <div className="space-y-2">
+                <Label>VNC 端口（需先在 iDRAC 中启用 VNC Server，默认 5900）</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={Number(form.idracVncPort ?? 5900)}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setField("idracVncPort", Number.isNaN(n) ? 0 : n);
+                  }}
+                  placeholder="5900"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>VNC 密码（iDRAC 中设置的 VNC Server 密码，非 Redfish 密码）</Label>
+                <Input
+                  type="password"
+                  value={String(form.idracVncPassword ?? "")}
+                  onChange={(e) => setField("idracVncPassword", e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
               <p className="text-[11px] text-gray-500">
-                清空「IP」并保存可删除 iDRAC 配置。填写 IP 时保存会先做 Redfish 登录检测，密码错误不会保存。
+                清空「IP」并保存可删除 iDRAC 配置。填写 IP 时保存会先做 Redfish 登录检测，密码错误不会保存。VNC 控制台需 iDRAC 侧启用 VNC Server 并开放对应端口。
               </p>
             </div>
           </div>

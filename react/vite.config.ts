@@ -9,7 +9,8 @@ import * as lucideIcons from "lucide-react";
 
 // 获取所有 lucide-react 导出的符号名
 const allLucideExports = Object.keys(lucideIcons).filter(
-  (key) => key !== "default"
+  // React 19 同样导出 Activity；让 lucide Activity 由页面显式 import，避免自动导入重名。
+  (key) => key !== "default" && key !== "Activity"
 );
 
 // 扫描 src 目录，找出实际使用的 lucide 图标
@@ -54,7 +55,7 @@ const usedLucideIcons = getUsedLucideIcons();
 
 // https://vite.dev/config/
 // 本地若 Go 监听非 8080（如 DASHBOARD_HTTP_ADDR=:18080），在 react/.env 设 VITE_DEV_API_TARGET=http://127.0.0.1:18080
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiTarget = env.VITE_DEV_API_TARGET || "http://127.0.0.1:8080";
   const uiBuildVersion = (env.VITE_UI_BUILD_VERSION || "").trim() || "dev";
@@ -89,12 +90,15 @@ export default defineConfig(({ mode }) => {
         enabled: false,
       },
     }),
-    checker({
-      typescript: {
-        tsconfigPath: "tsconfig.app.json",
-      },
-      enableBuild: true,
-    }),
+    ...(command === "serve"
+      ? [
+          checker({
+            typescript: {
+              tsconfigPath: "tsconfig.app.json",
+            },
+          }),
+        ]
+      : []),
   ],
   resolve: {
     dedupe: ["react", "react-dom"],

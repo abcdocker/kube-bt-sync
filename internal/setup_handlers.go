@@ -92,7 +92,14 @@ func handleSetupSave(app *ServerApp) gin.HandlerFunc {
 				mysqlWrite = d
 			}
 		}
-		if _, err := dialRedisLight(tmpCfg); err != nil {
+		// setup 时若 redisAddr 包含多地址（集群/哨兵），仅测试第一个节点的连通性
+		testCfg := tmpCfg
+		testAddr := strings.TrimSpace(tmpCfg.RedisAddr)
+		if idx := strings.Index(testAddr, ","); idx > 0 {
+			testAddr = strings.TrimSpace(testAddr[:idx])
+		}
+		testCfg.RedisAddr = testAddr
+		if _, err := dialRedisLight(testCfg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Redis 连接失败，请检查地址、密码与网络: " + err.Error()})
 			return
 		}
@@ -143,10 +150,10 @@ func validateSetupPayload(rs *RuntimeSettings, plainPwd string) error {
 	}
 	FinalizeConnectionStrings(&tmp)
 	if strings.TrimSpace(tmp.MySQLDSN) == "" {
-		return errors.New("MySQL 未配置：请填写 mysqlDsn，或 mysqlHost、端口、mysqlDatabase、mysqlUser")
+		return errors.New("MySQL 未配置：请填写库名、用户、密码，或展开高级选项填写 host 与端口")
 	}
 	if strings.TrimSpace(tmp.RedisAddr) == "" {
-		return errors.New("Redis 未配置：请填写 redisAddr，或 redisHost 与端口")
+		return errors.New("Redis 未配置：请填写地址与端口")
 	}
 	if len(strings.TrimSpace(rs.EncryptionKey)) < 16 {
 		return errors.New("encryptionKey 长度至少 16（用于加密敏感数据）")

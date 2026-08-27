@@ -5,6 +5,7 @@ import {
   Server,
   Settings,
   Boxes,
+  CloudCog,
   Activity as NodeActivityIcon,
   Globe,
   Monitor,
@@ -535,6 +536,19 @@ const Sidebar: React.FC = () => {
     location.pathname === "/cluster/apps/dns" ||
     location.pathname.startsWith("/cluster/apps/dns/");
 
+  const appCenterTencentCloudActive =
+    location.pathname === "/cluster/apps/tencent-cloud" ||
+    location.pathname.startsWith("/cluster/apps/tencent-cloud/");
+
+  const appCenterQiniuCloudActive =
+    location.pathname === "/cluster/apps/qiniu-cloud" ||
+    location.pathname.startsWith("/cluster/apps/qiniu-cloud/");
+
+  const appCenterUpyunCloudActive =
+    location.pathname === "/cluster/apps/upyun-cloud" ||
+    location.pathname.startsWith("/cluster/apps/upyun-cloud/");
+
+
   const aiInspectReportsActive =
     location.pathname === "/cluster/ai-inspect/reports" ||
     location.pathname.startsWith("/cluster/ai-inspect/reports/");
@@ -925,7 +939,7 @@ const Sidebar: React.FC = () => {
               to="/cluster/apps/cloud-vm"
               className={navLinkTint(appCenterCloudVmActive, "emerald")}
             >
-              <Cloud size={20} className={iconTint(appCenterCloudVmActive, "emerald")} />
+              <HardDrive size={20} className={iconTint(appCenterCloudVmActive, "emerald")} />
               <span>云主机</span>
             </Link>
             {/* Openclaw */}
@@ -936,7 +950,7 @@ const Sidebar: React.FC = () => {
               <Bot size={20} className={iconTint(appCenterOpenClawActive, "emerald")} />
               <span>Openclaw</span>
             </Link>
-            {/* DNS 管理 —— 父级：精确匹配 /cluster/apps/dns 才全亮，子页时显示淡绿色（无左 bar） */}
+            {/* DNSPod —— 父级：精确匹配 /cluster/apps/dns 才全亮，子页时显示淡绿色（无左 bar） */}
             {(() => {
               const dnsExact = location.pathname === "/cluster/apps/dns" || location.pathname === "/cluster/apps/dns/";
               const dnsParentCls = dnsExact
@@ -947,7 +961,7 @@ const Sidebar: React.FC = () => {
               return (
                 <Link to="/cluster/apps/dns" className={dnsParentCls}>
                   <Globe size={20} className={dnsExact ? "text-emerald-600" : appCenterDnsActive ? "text-emerald-500" : "text-gray-400"} />
-                  <span>DNS 管理</span>
+                  <span>DNSPod</span>
                 </Link>
               );
             })()}
@@ -971,6 +985,30 @@ const Sidebar: React.FC = () => {
                 })}
               </div>
             )}
+            {/* 腾讯云 */}
+            <Link
+              to="/cluster/apps/tencent-cloud"
+              className={navLinkTint(appCenterTencentCloudActive, "emerald")}
+            >
+              <Cloud size={20} className={iconTint(appCenterTencentCloudActive, "emerald")} />
+              <span>腾讯云</span>
+            </Link>
+            {/* 七牛云 */}
+            <Link
+              to="/cluster/apps/qiniu-cloud"
+              className={navLinkTint(appCenterQiniuCloudActive, "emerald")}
+            >
+              <CloudCog size={20} className={iconTint(appCenterQiniuCloudActive, "emerald")} />
+              <span>七牛云</span>
+            </Link>
+            {/* 又拍云 */}
+            <Link
+              to="/cluster/apps/upyun-cloud"
+              className={navLinkTint(appCenterUpyunCloudActive, "emerald")}
+            >
+              <Boxes size={20} className={iconTint(appCenterUpyunCloudActive, "emerald")} />
+              <span>又拍云</span>
+            </Link>
           </>
         ) : showAiInspectNav && isAiinspect ? (
           <>

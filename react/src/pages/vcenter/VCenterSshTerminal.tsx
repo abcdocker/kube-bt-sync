@@ -253,7 +253,7 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
 
   const hostCls =
     hostClassName ??
-    "vc-ssh-xterm-host h-[420px] max-h-[min(560px,70vh)] min-h-[280px] w-full shrink-0 overflow-hidden rounded-lg border border-gray-800 bg-[#1e1e1e] p-2";
+    "vc-ssh-xterm-host h-[clamp(240px,52dvh,420px)] max-h-[min(560px,70dvh)] min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-gray-800 bg-[#1e1e1e] p-2";
 
   if (!showOuterChrome) {
     if (!sshOk) {
@@ -313,9 +313,13 @@ const VCenterSshTerminal: React.FC<VCenterSshTerminalProps> = ({
             </span>
             <div className="flex gap-2">
               {!started ? (
-                <Button type="button" size="sm" onClick={() => setStarted(true)}>
-                  连接 SSH
-                </Button>
+                autoConnect ? (
+                  <span className="text-slate-500">正在准备 SSH 连接…</span>
+                ) : (
+                  <Button type="button" size="sm" onClick={() => setStarted(true)}>
+                    连接 SSH
+                  </Button>
+                )
               ) : (
                 <Button
                   type="button"

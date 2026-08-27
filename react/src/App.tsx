@@ -82,6 +82,16 @@ const AppCenterKafkaInstance = lazy(() =>
 );
 const AppCenterKafkaThrottle = lazy(() => import("./pages/AppCenterKafkaThrottle"));
 const AppCenterDns = lazy(() => import("./pages/dns/DnsLayout"));
+const TencentCloudLayout = lazy(() => import("./pages/tencent-cloud/TencentCloudLayout"));
+const TencentCloudOverview = lazy(() => import("./pages/tencent-cloud/TencentCloudOverview"));
+const TencentCloudCVM = lazy(() => import("./pages/tencent-cloud/TencentCloudCVM"));
+const TencentCloudLighthouse = lazy(() => import("./pages/tencent-cloud/TencentCloudLighthouse"));
+const TencentCloudCDN = lazy(() => import("./pages/tencent-cloud/TencentCloudCDN"));
+const TencentCloudCOS = lazy(() => import("./pages/tencent-cloud/TencentCloudCOS"));
+const TencentCloudCAM = lazy(() => import("./pages/tencent-cloud/TencentCloudCAM"));
+const QiniuCloudPage = lazy(() => import("./pages/qiniu-cloud/QiniuCloudPage"));
+const UpyunCloudPage = lazy(() => import("./pages/upyun-cloud/UpyunCloudPage"));
+
 const AppCenterCloudVm = lazy(() => import("./pages/AppCenterCloudVm"));
 const AppCenterCloudVmBootstrap = lazy(() => import("./pages/AppCenterCloudVmBootstrap"));
 const AppCenterCloudVmDetail = lazy(() => import("./pages/AppCenterCloudVmDetail"));
@@ -466,6 +476,51 @@ const App = () => {
                         </Suspense>
                       }
                     />
+                    <Route
+                      path="tencent-cloud"
+                      element={
+                        <Suspense fallback={routeChunkFallback}>
+                          <TencentCloudLayout />
+                        </Suspense>
+                      }
+                    >
+                      <Route index element={<Navigate to="overview" replace />} />
+                      <Route path="overview" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudOverview /></Suspense>
+                      } />
+                      <Route path="cvm" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudCVM /></Suspense>
+                      } />
+                      <Route path="lighthouse" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudLighthouse /></Suspense>
+                      } />
+                      <Route path="cos" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudCOS /></Suspense>
+                      } />
+                      <Route path="cdn" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudCDN /></Suspense>
+                      } />
+                      <Route path="cam" element={
+                        <Suspense fallback={routeChunkFallback}><TencentCloudCAM /></Suspense>
+                      } />
+                    </Route>
+                    <Route
+                      path="qiniu-cloud"
+                      element={
+                        <Suspense fallback={routeChunkFallback}>
+                          <QiniuCloudPage />
+                        </Suspense>
+                      }
+                    />
+                    <Route
+                      path="upyun-cloud"
+                      element={
+                        <Suspense fallback={routeChunkFallback}>
+                          <UpyunCloudPage />
+                        </Suspense>
+                      }
+                    />
+
                     <Route
                       path="cloud-vm/bootstrap"
                       element={

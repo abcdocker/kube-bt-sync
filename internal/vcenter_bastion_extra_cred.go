@@ -27,6 +27,7 @@ func mergeBastionExtraSSHStored(cfg Config, st *SSHVMStored, h *BastionExtraHost
 	pw := cfg.VCenterVMSshPassword
 	port := 22
 	insecure := cfg.VCenterVMSshInsecureHostKey
+	hostKeyFingerprint := cfg.VCenterVMSshHostKeyFingerprint
 	if st != nil {
 		if strings.TrimSpace(st.User) != "" {
 			user = strings.TrimSpace(st.User)
@@ -38,6 +39,7 @@ func mergeBastionExtraSSHStored(cfg Config, st *SSHVMStored, h *BastionExtraHost
 			port = st.Port
 		}
 		insecure = st.InsecureHostKey
+		hostKeyFingerprint = st.HostKeyFingerprint
 	}
 	if h != nil {
 		if strings.TrimSpace(h.SSHUser) != "" {
@@ -48,19 +50,17 @@ func mergeBastionExtraSSHStored(cfg Config, st *SSHVMStored, h *BastionExtraHost
 		}
 	}
 	out := &SSHVMStored{
-		User:            user,
-		Password:        pw,
-		PrivateKeyPEM:   "",
-		KeyPassphrase:   "",
-		Port:            port,
-		InsecureHostKey: insecure,
+		User:               user,
+		Password:           pw,
+		PrivateKeyPEM:      "",
+		KeyPassphrase:      "",
+		Port:               port,
+		InsecureHostKey:    insecure,
+		HostKeyFingerprint: hostKeyFingerprint,
 	}
 	if st != nil && strings.TrimSpace(st.PrivateKeyPEM) != "" {
 		out.PrivateKeyPEM = st.PrivateKeyPEM
 		out.KeyPassphrase = st.KeyPassphrase
-	}
-	if !out.InsecureHostKey {
-		out.InsecureHostKey = true
 	}
 	return out
 }
@@ -95,7 +95,7 @@ func bastionDialSSHToExtra(ctx context.Context, app *ServerApp, extraID string, 
 	return ssh.Dial("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), sshCfg)
 }
 
-func bastionTrySSHPasswordDial(address string, port int, user, password string) error {
+func bastionTrySSHPasswordDial(address string, port int, user, password, fingerprint string) error {
 	user = strings.TrimSpace(user)
 	if user == "" {
 		return errors.New("SSH 用户名为空")
@@ -110,10 +110,14 @@ func bastionTrySSHPasswordDial(address string, port int, user, password string) 
 	if addr == "" {
 		return errors.New("地址为空")
 	}
+	hostKeyCallback, err := pinnedSSHHostKeyCallback(false, fingerprint)
+	if err != nil {
+		return err
+	}
 	sshCfg := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(password)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         15 * time.Second,
 	}
 	c, err := ssh.Dial("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), sshCfg)
@@ -158,13 +162,15 @@ func bastionPersistLinuxExtraSSH(ctx context.Context, app *ServerApp, id string,
 	if port <= 0 {
 		port = 22
 	}
-	t := true
+	t := false
 	pw := password
+	fingerprint := normalizeSSHHostKeyFingerprint(h.SSHHostKeyFingerprint)
 	return store.PutVM(ctx, BastionExtraSSHStoreKey(id), &sshVMPutInput{
-		User:            user,
-		Password:        &pw,
-		Port:            &port,
-		InsecureHostKey: &t,
+		User:               user,
+		Password:           &pw,
+		Port:               &port,
+		InsecureHostKey:    &t,
+		HostKeyFingerprint: &fingerprint,
 	}, key)
 }
 

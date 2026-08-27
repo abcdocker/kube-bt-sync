@@ -11,10 +11,10 @@ import (
 )
 
 type Config struct {
-	BaotaURL           string
-	BaotaAPIKey        string
+	BaotaURL    string
+	BaotaAPIKey string
 	// BaotaTargets 多实例（runtime baotaTargets）；nil 表示仅使用 BaotaURL/BaotaAPIKey。
-	BaotaTargets []BaotaTargetEntry `json:"-"`
+	BaotaTargets       []BaotaTargetEntry `json:"-"`
 	BaotaSkipTLSVerify bool
 	// 默认 true：公网面板下复用连接易陈旧，易导致「awaiting headers」挂满直至 Client.Timeout；设为 false 可省握手。
 	BaotaDisableHTTPKeepAlive bool
@@ -70,27 +70,34 @@ type Config struct {
 	IdracUser     string
 	IdracPassword string
 	IdracInsecure bool
+	// iDRAC VNC 控制台（需先在 iDRAC 设置中启用 VNC Server）
+	IdracVncPort     int
+	IdracVncPassword string
 	// vCenter / vSphere（可选）：虚拟机与 WebMKS 控制台
 	VCenterURL      string // 如 https://vcenter.example.com 或 https://vcenter/sdk
 	VCenterUser     string
 	VCenterPassword string
 	VCenterInsecure bool // 跳过 TLS 校验（自签证书）
-	// 可选：浏览器内嵌 WebMKS 时加载 VMware HTML Console SDK（需可访问的 URL）
+	// 旧版兼容字段：当前原生控制台已改用内置 noVNC + 后端 WebMKS WebSocket。
 	VCenterWmksScriptURL string
 	VCenterWmksCssURL    string
-	// 浏览器访问 vSphere UI 的对外根地址（Nginx 反代 / SSO 时用公网域名，可与 VCENTER_URL 不同）
+	// vSphere UI 外部链接配置；不参与内嵌控制台连接。
 	VCenterUIBaseURL string
-	// webconsole.html 的 host 参数；空则使用 VCenterUIBaseURL 的 Hostname
+	// WebMKS 后端拨号地址覆盖；当票据返回的 ESXi 主机名无法被 Pod DNS 解析时填写管理 IP 或 host:port。
 	VCenterConsoleHost string
-	// 可选：覆盖从 VCENTER_UI_BASE_URL 探测到的 SHA1 指纹（Nginx 与 vCenter 证书不一致时）
+	// VCenterConsoleProxyURL 已废弃，仅保留旧配置兼容。vCenter /ui/webmks
+	// 依赖 vSphere Client SSO，不能作为平台服务端的 WebMKS 代理。
+	VCenterConsoleProxyURL string
+	// 旧版兼容字段；不参与内嵌控制台连接。
 	VCenterUIThumbprint string
 	// 虚拟机 SSH（页面内终端）：浏览器仅连 Dashboard；SSH 由本进程向 Guest IP 拨号转发，凭据在服务端。运维需将本进程部署在能访问该 IP:端口的网络中。
-	VCenterVMSshUser            string
-	VCenterVMSshPrivateKeyPath  string
-	VCenterVMSshPassword        string
-	VCenterVMSshKeyPassphrase   string // 加密私钥口令
-	VCenterVMSshPort            int
-	VCenterVMSshInsecureHostKey bool // true 时跳过 known_hosts 校验（内网常用）
+	VCenterVMSshUser               string
+	VCenterVMSshPrivateKeyPath     string
+	VCenterVMSshPassword           string
+	VCenterVMSshKeyPassphrase      string // 加密私钥口令
+	VCenterVMSshPort               int
+	VCenterVMSshInsecureHostKey    bool   // true 时跳过 known_hosts 校验（内网常用）
+	VCenterVMSshHostKeyFingerprint string // SHA256:...，安全模式下固定 Guest SSH 主机公钥
 	// SSH 凭据持久化（可选）：redis / mysql；与 KUBEBT_ENCRYPTION_KEY 配合加密密码与私钥
 	SSHSettingsBackend SSHSettingsBackend
 	EncryptionKey      string // KUBEBT_ENCRYPTION_KEY
@@ -303,7 +310,7 @@ func LoadConfig() Config {
 		BaotaHTTPTimeout:                  time.Duration(timeoutSec) * time.Second,
 		BaotaTCPProbeTimeout:              time.Duration(tcpProbeSec) * time.Second,
 		BaotaCheckMinInterval:             time.Duration(checkMinSec) * time.Second,
-		DDNSHost:                          getEnv("DDNS_HOST", "home.i4t.com"),
+		DDNSHost:                          getEnv("DDNS_HOST", "home.example.com"),
 		DefaultPort:                       getEnv("DEFAULT_PORT", "38333"),
 		BaotaUpstreamHost:                 strings.TrimSpace(getEnv("BAOTA_UPSTREAM_HOST", "")),
 		BaotaUpstreamPort:                 strings.TrimSpace(getEnv("BAOTA_UPSTREAM_PORT", "")),
@@ -341,18 +348,20 @@ func LoadConfig() Config {
 		VCenterURL:                        strings.TrimSpace(getEnv("VCENTER_URL", "")),
 		VCenterUser:                       strings.TrimSpace(getEnv("VCENTER_USER", "")),
 		VCenterPassword:                   os.Getenv("VCENTER_PASSWORD"),
-		VCenterInsecure:                   getEnvBool("VCENTER_INSECURE", true),
+		VCenterInsecure:                   getEnvBool("VCENTER_INSECURE", false),
 		VCenterWmksScriptURL:              strings.TrimSpace(getEnv("VCENTER_WMKS_SCRIPT_URL", "")),
 		VCenterWmksCssURL:                 strings.TrimSpace(getEnv("VCENTER_WMKS_CSS_URL", "")),
 		VCenterUIBaseURL:                  strings.TrimSpace(getEnv("VCENTER_UI_BASE_URL", "")),
 		VCenterConsoleHost:                strings.TrimSpace(getEnv("VCENTER_CONSOLE_HOST", "")),
+		VCenterConsoleProxyURL:            strings.TrimSpace(getEnv("VCENTER_CONSOLE_PROXY_URL", "")),
 		VCenterUIThumbprint:               strings.TrimSpace(getEnv("VCENTER_UI_THUMBPRINT", "")),
 		VCenterVMSshUser:                  strings.TrimSpace(getEnv("VCENTER_VM_SSH_USER", "")),
 		VCenterVMSshPrivateKeyPath:        strings.TrimSpace(getEnv("VCENTER_VM_SSH_PRIVATE_KEY_PATH", "")),
 		VCenterVMSshPassword:              os.Getenv("VCENTER_VM_SSH_PASSWORD"),
 		VCenterVMSshKeyPassphrase:         os.Getenv("VCENTER_VM_SSH_KEY_PASSPHRASE"),
 		VCenterVMSshPort:                  sshPort,
-		VCenterVMSshInsecureHostKey:       getEnvBool("VCENTER_VM_SSH_INSECURE_HOST_KEY", true),
+		VCenterVMSshInsecureHostKey:       getEnvBool("VCENTER_VM_SSH_INSECURE_HOST_KEY", false),
+		VCenterVMSshHostKeyFingerprint:    strings.TrimSpace(getEnv("VCENTER_VM_SSH_HOST_KEY_FINGERPRINT", "")),
 		SSHSettingsBackend:                SSHSettingsBackend(strings.ToLower(strings.TrimSpace(getEnv("SSH_SETTINGS_BACKEND", "")))),
 		EncryptionKey:                     strings.TrimSpace(os.Getenv("KUBEBT_ENCRYPTION_KEY")),
 		TotpIssuer:                        strings.TrimSpace(os.Getenv("KUBEBT_TOTP_ISSUER")),
@@ -398,7 +407,7 @@ func LoadConfig() Config {
 		VCenterBastionVMListCacheTTLSec:   getEnvAsInt("VCENTER_BASTION_VM_LIST_CACHE_TTL_SEC", 3600),
 		CloudHostAutoInstallNodeExporter:  getEnvBool("CLOUD_HOST_AUTO_INSTALL_NODE_EXPORTER", false),
 		NodeExporterVersion:               strings.TrimSpace(getEnv("NODE_EXPORTER_VERSION", "1.8.2")),
-		RuntimeDualWriteRedis:             getEnvBool("KUBEBT_RUNTIME_DUAL_WRITE_REDIS", true),
+		RuntimeDualWriteRedis:             getEnvBool("KUBEBT_RUNTIME_DUAL_WRITE_REDIS", false),
 		OIDCIssuerURL:                     strings.TrimSpace(getEnv("OIDC_ISSUER_URL", "")),
 		OIDCClientID:                      strings.TrimSpace(getEnv("OIDC_CLIENT_ID", "")),
 		OIDCClientSecret:                  strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
@@ -447,8 +456,8 @@ func normalizeDashboardListenAddr(addr string) string {
 	return addr
 }
 
-// loadBaotaSkipTLSVerify：若显式设置 BAOTA_SKIP_TLS_VERIFY 则按其值；否则对 https:// 宝塔地址默认跳过校验（自签/内网 SAN 常见）。
-// 若使用正规证书且需严格校验，请设置 BAOTA_SKIP_TLS_VERIFY=false。
+// loadBaotaSkipTLSVerify 仅在显式设置 BAOTA_SKIP_TLS_VERIFY=true 时跳过校验。
+// HTTPS 默认必须校验证书；自签环境应导入可信 CA，临时排障才使用不安全开关。
 // 未设置环境变量时默认禁用 keep-alive，减轻跨公网面板陈旧连接导致的超时。
 func loadBaotaDisableHTTPKeepAlive() bool {
 	_, ok := os.LookupEnv("BAOTA_DISABLE_HTTP_KEEPALIVE")
@@ -459,12 +468,8 @@ func loadBaotaDisableHTTPKeepAlive() bool {
 }
 
 func loadBaotaSkipTLSVerify(baotaURL string) bool {
-	raw, ok := os.LookupEnv("BAOTA_SKIP_TLS_VERIFY")
-	if ok && strings.TrimSpace(raw) != "" {
-		return getEnvBool("BAOTA_SKIP_TLS_VERIFY", false)
-	}
-	u := strings.TrimSpace(strings.ToLower(baotaURL))
-	return strings.HasPrefix(u, "https://")
+	_ = baotaURL
+	return getEnvBool("BAOTA_SKIP_TLS_VERIFY", false)
 }
 
 func validateBaotaSSLMaterialPaths(pemPath, keyPath string) error {

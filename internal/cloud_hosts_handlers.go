@@ -21,13 +21,14 @@ const cloudHostsKVKey = "cloud_hosts_v1"
 
 // CloudHost 非 vCenter 的公有云 / 裸金属主机；监控仅依赖 Prometheus（node_exporter），instance 与 SSH 地址一致，一般为 IP:9100。
 type CloudHost struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	SSHHost              string `json:"sshHost"`
-	SSHPort              int    `json:"sshPort"`
-	SSHUser              string `json:"sshUser"`
-	NodeExporterInstance string `json:"nodeExporterInstance,omitempty"` // 已废弃，保留兼容旧数据
-	Comment              string `json:"comment,omitempty"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	SSHHost               string `json:"sshHost"`
+	SSHPort               int    `json:"sshPort"`
+	SSHUser               string `json:"sshUser"`
+	SSHHostKeyFingerprint string `json:"sshHostKeyFingerprint,omitempty"`
+	NodeExporterInstance  string `json:"nodeExporterInstance,omitempty"` // 已废弃，保留兼容旧数据
+	Comment               string `json:"comment,omitempty"`
 }
 
 func escapePromQLLabelValue(s string) string {
@@ -129,13 +130,14 @@ func handleCloudHostsList(c *gin.Context, app *ServerApp) {
 }
 
 type cloudHostBody struct {
-	Name                 string `json:"name"`
-	SSHHost              string `json:"sshHost"`
-	SSHPort              int    `json:"sshPort"`
-	SSHUser              string `json:"sshUser"`
-	Comment              string `json:"comment"`
-	SSHPassword          string `json:"sshPassword"`
-	SSHPrivateKeyPEM     string `json:"sshPrivateKeyPem"`
+	Name                  string `json:"name"`
+	SSHHost               string `json:"sshHost"`
+	SSHPort               int    `json:"sshPort"`
+	SSHUser               string `json:"sshUser"`
+	SSHHostKeyFingerprint string `json:"sshHostKeyFingerprint"`
+	Comment               string `json:"comment"`
+	SSHPassword           string `json:"sshPassword"`
+	SSHPrivateKeyPEM      string `json:"sshPrivateKeyPem"`
 }
 
 func persistCloudHostSSHIfAny(ctx context.Context, app *ServerApp, host CloudHost, password, pem string) error {
@@ -153,15 +155,20 @@ func persistCloudHostSSHIfAny(ctx context.Context, app *ServerApp, host CloudHos
 		return err
 	}
 	cloudKey := cloudHostSSHStorageKey(host.ID)
-	insecure := true
+	insecure := app.Cfg().VCenterVMSshInsecureHostKey
+	fingerprint := strings.TrimSpace(host.SSHHostKeyFingerprint)
+	if fingerprint == "" {
+		fingerprint = app.Cfg().VCenterVMSshHostKeyFingerprint
+	}
 	port := host.SSHPort
 	if port <= 0 {
 		port = 22
 	}
 	patch := &sshVMPutInput{
-		User:            strings.TrimSpace(host.SSHUser),
-		InsecureHostKey: &insecure,
-		Port:            &port,
+		User:               strings.TrimSpace(host.SSHUser),
+		InsecureHostKey:    &insecure,
+		HostKeyFingerprint: &fingerprint,
+		Port:               &port,
 	}
 	if pw != "" {
 		patch.Password = &pw
@@ -195,12 +202,13 @@ func handleCloudHostsCreate(c *gin.Context, app *ServerApp) {
 	key, _ := sshEncryptionKey(cfg)
 	store := app.SSHStore()
 	h := CloudHost{
-		ID:                   uuid.NewString(),
-		Name:                 strings.TrimSpace(body.Name),
-		SSHHost:              strings.TrimSpace(body.SSHHost),
-		SSHPort:              port,
-		SSHUser:              strings.TrimSpace(body.SSHUser),
-		Comment:              strings.TrimSpace(body.Comment),
+		ID:                    uuid.NewString(),
+		Name:                  strings.TrimSpace(body.Name),
+		SSHHost:               strings.TrimSpace(body.SSHHost),
+		SSHPort:               port,
+		SSHUser:               strings.TrimSpace(body.SSHUser),
+		SSHHostKeyFingerprint: normalizeSSHHostKeyFingerprint(body.SSHHostKeyFingerprint),
+		Comment:               strings.TrimSpace(body.Comment),
 	}
 	cloudKey := cloudHostSSHStorageKey(h.ID)
 	if !cloudHostSSHCanDial(ctx, cfg, store, cloudKey, key, &h, body.SSHPassword, body.SSHPrivateKeyPEM) {
@@ -288,6 +296,7 @@ func handleCloudHostsUpdate(c *gin.Context, app *ServerApp) {
 	next.SSHHost = strings.TrimSpace(body.SSHHost)
 	next.SSHPort = port
 	next.SSHUser = strings.TrimSpace(body.SSHUser)
+	next.SSHHostKeyFingerprint = normalizeSSHHostKeyFingerprint(body.SSHHostKeyFingerprint)
 	next.Comment = strings.TrimSpace(body.Comment)
 	cloudKey := cloudHostSSHStorageKey(id)
 	if !cloudHostSSHCanDial(ctx, cfg, store, cloudKey, key, &next, body.SSHPassword, body.SSHPrivateKeyPEM) {

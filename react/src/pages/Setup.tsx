@@ -1,12 +1,17 @@
 import React, { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Database, Hexagon, KeyRound, Server } from "lucide-react";
+import { Database, Hexagon, KeyRound, Server, Shield, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Select,
   SelectContent,
@@ -18,6 +23,7 @@ import { toast } from "sonner";
 import { apiGetJson, apiPostJson, type SetupStatus } from "@/lib/api";
 
 type K8sMode = "none" | "incluster" | "kubeconfig";
+type RedisMode = "standalone" | "sentinel" | "cluster";
 
 const Setup: React.FC = () => {
   const qc = useQueryClient();
@@ -26,46 +32,54 @@ const Setup: React.FC = () => {
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // 必填：平台 URL、MySQL、Redis、加密、管理员
+  // 必填：平台 URL
   const [platformPublicUrl, setPlatformPublicUrl] = useState("https://");
+
+  // MySQL：默认折叠 host/port
   const [mysqlHost, setMysqlHost] = useState("127.0.0.1");
   const [mysqlPort, setMysqlPort] = useState(3306);
   const [mysqlDatabase, setMysqlDatabase] = useState("");
   const [mysqlUser, setMysqlUser] = useState("");
   const [mysqlPassword, setMysqlPassword] = useState("");
+  const [mysqlAdvancedOpen, setMysqlAdvancedOpen] = useState(false);
+
+  // Redis：架构选择
+  const [redisMode, setRedisMode] = useState<RedisMode>("standalone");
   const [redisHost, setRedisHost] = useState("127.0.0.1");
   const [redisPort, setRedisPort] = useState(6379);
   const [redisPassword, setRedisPassword] = useState("");
+  const [redisSentinelAddrs, setRedisSentinelAddrs] = useState("127.0.0.1:26379");
+  const [redisSentinelMaster, setRedisSentinelMaster] = useState("mymaster");
+  const [redisClusterAddrs, setRedisClusterAddrs] = useState("127.0.0.1:6379");
+
+  // 加密密钥 + 管理员
   const [encryptionKey, setEncryptionKey] = useState("");
   const [dashboardUser, setDashboardUser] = useState("admin");
   const [dashboardPasswordPlain, setDashboardPasswordPlain] = useState("");
-  const [dashboardSessionDays, setDashboardSessionDays] = useState(7);
 
-  // 可选：Ingress↔宝塔
-  const [ingressBaotaSync, setIngressBaotaSync] = useState(false);
+  // 可选模块：默认全部「稍后配置」
+  const [baotaEnabled, setBaotaEnabled] = useState(false);
   const [baotaUrl, setBaotaUrl] = useState("");
   const [baotaApiKey, setBaotaApiKey] = useState("");
   const [baotaSkipTls, setBaotaSkipTls] = useState(true);
   const [syncIntervalSec, setSyncIntervalSec] = useState(30);
-  const [ddnsHost, setDdnsHost] = useState("home.i4t.com");
+  const [ddnsHost, setDdnsHost] = useState("home.example.com");
   const [defaultPort, setDefaultPort] = useState("38333");
   const [baotaSslCertName, setBaotaSslCertName] = useState("");
   const [baotaSslPemContent, setBaotaSslPemContent] = useState("");
   const [baotaSslKeyContent, setBaotaSslKeyContent] = useState("");
 
-  // 可选：K8s
   const [k8sMode, setK8sMode] = useState<K8sMode>("none");
   const [kubeconfigYaml, setKubeconfigYaml] = useState("");
 
-  // 可选：vCenter
+  const [vcenterEnabled, setVcenterEnabled] = useState(false);
   const [vcenterUrl, setVcenterUrl] = useState("");
   const [vcenterUser, setVcenterUser] = useState("");
   const [vcenterPassword, setVcenterPassword] = useState("");
   const [vcenterInsecure, setVcenterInsecure] = useState(true);
   const [vcenterCacheTtlSec, setVcenterCacheTtlSec] = useState(120);
 
-  // 可选：SSH 持久化
-  const [sshBackend, setSshBackend] = useState<"" | "file">("");
+  const [sshEnabled, setSshEnabled] = useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -84,17 +98,44 @@ const Setup: React.FC = () => {
     };
   }, []);
 
+  const buildRedisConfig = () => {
+    let finalHost = redisHost;
+    let finalPort = redisPort;
+    let finalAddr = "";
+    if (redisMode === "standalone") {
+      finalAddr = `${redisHost}:${redisPort}`;
+    } else if (redisMode === "sentinel") {
+      finalAddr = redisSentinelAddrs;
+      const first = redisSentinelAddrs.split(",")[0].trim();
+      if (first) {
+        const [h, p] = first.split(":");
+        if (h) finalHost = h;
+        if (p) finalPort = parseInt(p, 10) || 26379;
+      }
+    } else if (redisMode === "cluster") {
+      finalAddr = redisClusterAddrs;
+      const first = redisClusterAddrs.split(",")[0].trim();
+      if (first) {
+        const [h, p] = first.split(":");
+        if (h) finalHost = h;
+        if (p) finalPort = parseInt(p, 10) || 6379;
+      }
+    }
+    return { finalHost, finalPort, finalAddr };
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setErr(null);
     try {
-      const be = sshBackend.trim();
-      if ((baotaSslPemContent.trim() === "") !== (baotaSslKeyContent.trim() === "")) {
+      if (baotaEnabled && (baotaSslPemContent.trim() === "") !== (baotaSslKeyContent.trim() === "")) {
         setErr("baotaSslPemContent 与 baotaSslKeyContent 必须同时填写");
         setSubmitting(false);
         return;
       }
+      const { finalHost, finalPort, finalAddr } = buildRedisConfig();
+
       const k8s =
         k8sMode === "none"
           ? { mode: "none" as const, kubeconfigYaml: "" }
@@ -111,14 +152,16 @@ const Setup: React.FC = () => {
         mysqlUser: mysqlUser.trim(),
         mysqlPassword,
         mysqlDsn: "",
-        redisHost: redisHost.trim(),
-        redisPort,
-        redisAddr: "",
+        redisHost: finalHost,
+        redisPort: finalPort,
+        redisAddr: finalAddr,
         redisPassword,
         redisDb: 0,
         redisKeyPrefix: "",
+        redisMode,
+        redisSentinelMaster: redisMode === "sentinel" ? redisSentinelMaster.trim() : "",
         encryptionKey: encryptionKey.trim(),
-        ingressBaotaSyncEnabled: ingressBaotaSync,
+        ingressBaotaSyncEnabled: baotaEnabled,
         baotaUrl: baotaUrl.trim(),
         baotaApiKey: baotaApiKey.trim(),
         baotaSkipTlsVerify: baotaSkipTls,
@@ -133,16 +176,16 @@ const Setup: React.FC = () => {
         baotaSslPemContent: baotaSslPemContent.trim(),
         baotaSslKeyContent: baotaSslKeyContent.trim(),
         dashboardUser: dashboardUser.trim(),
-        dashboardSessionDays,
+        dashboardSessionDays: 7,
         dashboardCookieSecure: false,
         dashboardListenAddr: ":8080",
         prometheusUrl: "",
         prometheusTimeoutSec: 30,
         prometheusSkipTls: false,
         prometheusBearerToken: "",
-        vcenterUrl: vcenterUrl.trim(),
-        vcenterUser: vcenterUser.trim(),
-        vcenterPassword,
+        vcenterUrl: vcenterEnabled ? vcenterUrl.trim() : "",
+        vcenterUser: vcenterEnabled ? vcenterUser.trim() : "",
+        vcenterPassword: vcenterEnabled ? vcenterPassword : "",
         vcenterInsecure,
         vcenterWmksScriptUrl: "",
         vcenterWmksCssUrl: "",
@@ -154,9 +197,10 @@ const Setup: React.FC = () => {
         vcenterVmSshPassword: "",
         vcenterVmSshKeyPassphrase: "",
         vcenterVmSshPort: 22,
-        vcenterVmSshInsecureHostKey: true,
-        vcenterCacheTtlSec,
-        sshSettingsBackend: be,
+        vcenterVmSshInsecureHostKey: false,
+        vcenterVmSshHostKeyFingerprint: "",
+        vcenterCacheTtlSec: vcenterEnabled ? vcenterCacheTtlSec : 120,
+        sshSettingsBackend: sshEnabled ? "file" : "",
         sshSettingsDir: "",
         k8s,
         dashboardPasswordPlain,
@@ -190,6 +234,24 @@ const Setup: React.FC = () => {
     );
   }
 
+  const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; desc?: string }> = ({
+    icon,
+    title,
+    desc,
+  }) => (
+    <CardHeader className="pb-4">
+      <CardTitle className="flex items-center gap-2 text-lg">
+        {icon}
+        {title}
+      </CardTitle>
+      {desc && <CardDescription>{desc}</CardDescription>}
+    </CardHeader>
+  );
+
+  const FieldHint: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+    <p className="text-xs text-slate-500 mt-1">{children}</p>
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-100 to-slate-200 py-10 px-4 font-sans">
       <div className="mx-auto max-w-3xl space-y-6">
@@ -199,198 +261,323 @@ const Setup: React.FC = () => {
           </div>
           <h1 className="text-2xl font-bold text-slate-900">首次初始化</h1>
           <p className="max-w-xl text-sm text-slate-600">
-            必填：平台 URL、MySQL、Redis、加密密钥、管理员账号。宝塔/Ingress 同步、K8s、vCenter
-            可在后台「系统设置」中再开启。
+            仅需配置平台 URL、数据库、Redis 与管理员账号即可开始使用。
+            宝塔同步、K8s、vCenter 等功能可在初始化完成后于「系统设置」中开启。
             数据目录：{" "}
             <span className="font-mono text-xs">{status?.dataDir ?? "…"}</span>
           </p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-6">
+          {/* 必填：平台与数据存储 */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <KeyRound className="h-5 w-5 text-blue-600" />
-                必填：平台与数据存储
-              </CardTitle>
-              <CardDescription>
-                MySQL 与 Redis 用于平台元数据与 vCenter 列表缓存；加密密钥用于保护敏感字段。Redis
-                仅需填写 IP、端口与密码（逻辑库固定为 0）。
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+            <SectionHeader
+              icon={<KeyRound className="h-5 w-5 text-blue-600" />}
+              title="必填：平台与数据存储"
+              desc="MySQL 存储平台元数据；Redis 用于缓存与平台 KV 双写。"
+            />
+            <CardContent className="space-y-5">
+              {/* 平台 URL */}
               <div className="space-y-2">
-                <Label>platformPublicUrl（浏览器访问本平台的根地址）</Label>
+                <Label>平台访问地址</Label>
                 <Input
                   value={platformPublicUrl}
                   onChange={(e) => setPlatformPublicUrl(e.target.value)}
                   required
                   placeholder="https://kube-bt.example.com"
                 />
+                <FieldHint>浏览器访问本平台的根地址，含协议与域名。</FieldHint>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <Label>MySQL 地址</Label>
-                  <Input
-                    value={mysqlHost}
-                    onChange={(e) => setMysqlHost(e.target.value)}
-                    required
-                    placeholder="127.0.0.1 或主机名"
-                  />
+
+              {/* MySQL */}
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-800">MySQL</span>
                 </div>
-                <div className="space-y-2">
-                  <Label>端口</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={mysqlPort}
-                    onChange={(e) => setMysqlPort(Number(e.target.value))}
-                    required
-                  />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>库名</Label>
+                    <Input
+                      value={mysqlDatabase}
+                      onChange={(e) => setMysqlDatabase(e.target.value)}
+                      required
+                      placeholder="kubebt"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>用户</Label>
+                    <Input
+                      value={mysqlUser}
+                      onChange={(e) => setMysqlUser(e.target.value)}
+                      required
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>密码</Label>
+                    <Input
+                      type="password"
+                      value={mysqlPassword}
+                      onChange={(e) => setMysqlPassword(e.target.value)}
+                      required
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>库名</Label>
-                  <Input
-                    value={mysqlDatabase}
-                    onChange={(e) => setMysqlDatabase(e.target.value)}
-                    required
-                    placeholder="database"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>用户</Label>
-                  <Input
-                    value={mysqlUser}
-                    onChange={(e) => setMysqlUser(e.target.value)}
-                    required
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label>密码</Label>
-                  <Input
-                    type="password"
-                    value={mysqlPassword}
-                    onChange={(e) => setMysqlPassword(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </div>
+
+                <Collapsible open={mysqlAdvancedOpen} onOpenChange={setMysqlAdvancedOpen}>
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+                    >
+                      {mysqlAdvancedOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      高级选项（Host / 端口）
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-3">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Host</Label>
+                        <Input
+                          value={mysqlHost}
+                          onChange={(e) => setMysqlHost(e.target.value)}
+                          placeholder="127.0.0.1"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>端口</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={mysqlPort}
+                          onChange={(e) => setMysqlPort(Number(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Redis IP</Label>
-                  <Input
-                    value={redisHost}
-                    onChange={(e) => setRedisHost(e.target.value)}
-                    required
-                    placeholder="127.0.0.1"
-                    autoComplete="off"
-                  />
+
+              {/* Redis */}
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex items-center gap-2">
+                  <Server className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-800">Redis</span>
                 </div>
                 <div className="space-y-2">
-                  <Label>Redis 端口</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={redisPort}
-                    onChange={(e) => setRedisPort(Number(e.target.value))}
-                    required
-                  />
+                  <Label>部署架构</Label>
+                  <Select value={redisMode} onValueChange={(v) => setRedisMode(v as RedisMode)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="standalone">单机（Standalone）</SelectItem>
+                      <SelectItem value="sentinel">哨兵（Sentinel）</SelectItem>
+                      <SelectItem value="cluster">集群（Cluster）</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label>Redis 密码（可选）</Label>
-                  <Input
-                    type="password"
-                    value={redisPassword}
-                    onChange={(e) => setRedisPassword(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </div>
+
+                {redisMode === "standalone" && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Host</Label>
+                      <Input
+                        value={redisHost}
+                        onChange={(e) => setRedisHost(e.target.value)}
+                        placeholder="127.0.0.1"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>端口</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={redisPort}
+                        onChange={(e) => setRedisPort(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>密码（可选）</Label>
+                      <Input
+                        type="password"
+                        value={redisPassword}
+                        onChange={(e) => setRedisPassword(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {redisMode === "sentinel" && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label>Sentinel 地址</Label>
+                      <Input
+                        value={redisSentinelAddrs}
+                        onChange={(e) => setRedisSentinelAddrs(e.target.value)}
+                        required={redisMode === "sentinel"}
+                        placeholder="host1:26379,host2:26379"
+                        autoComplete="off"
+                      />
+                      <FieldHint>多个 Sentinel 节点用英文逗号分隔。初始化时仅验证首个节点连通性。</FieldHint>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Master 名称</Label>
+                        <Input
+                          value={redisSentinelMaster}
+                          onChange={(e) => setRedisSentinelMaster(e.target.value)}
+                          required={redisMode === "sentinel"}
+                          placeholder="mymaster"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>密码（可选）</Label>
+                        <Input
+                          type="password"
+                          value={redisPassword}
+                          onChange={(e) => setRedisPassword(e.target.value)}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {redisMode === "cluster" && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label>集群节点地址</Label>
+                      <Input
+                        value={redisClusterAddrs}
+                        onChange={(e) => setRedisClusterAddrs(e.target.value)}
+                        required={redisMode === "cluster"}
+                        placeholder="host1:6379,host2:6379,host3:6379"
+                        autoComplete="off"
+                      />
+                      <FieldHint>至少填写一个节点地址，多个用英文逗号分隔。初始化时仅验证首个节点连通性。</FieldHint>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>密码（可选）</Label>
+                      <Input
+                        type="password"
+                        value={redisPassword}
+                        onChange={(e) => setRedisPassword(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* 加密密钥 */}
               <div className="space-y-2">
-                <Label>encryptionKey（至少 16 字符）</Label>
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-slate-500" />
+                  <Label>加密密钥（Encryption Key）</Label>
+                </div>
                 <Input
                   value={encryptionKey}
                   onChange={(e) => setEncryptionKey(e.target.value)}
                   required
                   minLength={16}
                   autoComplete="off"
+                  placeholder="至少 16 位随机字符串，建议 32 位"
                 />
+                <div className="flex items-start gap-1.5 text-xs text-slate-500 mt-1">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    用于加密敏感数据（如宝塔 SSL 证书、SSH 私钥、云账号凭证等）。请妥善保存，丢失后无法解密已有数据。
+                  </span>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>dashboardUser</Label>
-                <Input value={dashboardUser} onChange={(e) => setDashboardUser(e.target.value)} required />
-              </div>
-              <div className="space-y-2">
-                <Label>dashboardPasswordPlain（至少 8 位）</Label>
-                <Input
-                  type="password"
-                  value={dashboardPasswordPlain}
-                  onChange={(e) => setDashboardPasswordPlain(e.target.value)}
-                  required
-                  minLength={8}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>dashboardSessionDays</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={dashboardSessionDays}
-                  onChange={(e) => setDashboardSessionDays(Number(e.target.value))}
-                />
+
+              {/* 管理员账号 */}
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-800">管理员账号</span>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>用户名</Label>
+                    <Input value={dashboardUser} onChange={(e) => setDashboardUser(e.target.value)} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>密码</Label>
+                    <Input
+                      type="password"
+                      value={dashboardPasswordPlain}
+                      onChange={(e) => setDashboardPasswordPlain(e.target.value)}
+                      required
+                      minLength={8}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="至少 8 位"
+                    />
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
 
+          {/* 可选：宝塔同步 */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Server className="h-5 w-5 text-amber-600" />
-                可选：Ingress ↔ 宝塔同步
-              </CardTitle>
-              <CardDescription>默认关闭；开启后需填写宝塔 URL 与 API Key，并建议配置 K8s</CardDescription>
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Server className="h-5 w-5 text-amber-600" />
+                  Ingress ↔ 宝塔同步
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">{baotaEnabled ? "直接配置" : "稍后配置"}</span>
+                  <Switch checked={baotaEnabled} onCheckedChange={setBaotaEnabled} />
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
-                <Label className="cursor-pointer">ingressBaotaSyncEnabled</Label>
-                <Switch checked={ingressBaotaSync} onCheckedChange={setIngressBaotaSync} />
-              </div>
-              <div className="space-y-2">
-                <Label>baotaUrl</Label>
-                <Input value={baotaUrl} onChange={(e) => setBaotaUrl(e.target.value)} placeholder="留空则不同步" />
-              </div>
-              <div className="space-y-2">
-                <Label>baotaApiKey</Label>
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={baotaApiKey}
-                  onChange={(e) => setBaotaApiKey(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
-                <Label className="cursor-pointer">HTTPS 跳过 TLS</Label>
-                <Switch checked={baotaSkipTls} onCheckedChange={setBaotaSkipTls} />
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
+            {baotaEnabled && (
+              <CardContent className="space-y-4 pt-0">
                 <div className="space-y-2">
-                  <Label>ddnsHost</Label>
-                  <Input value={ddnsHost} onChange={(e) => setDdnsHost(e.target.value)} />
+                  <Label>宝塔面板地址</Label>
+                  <Input value={baotaUrl} onChange={(e) => setBaotaUrl(e.target.value)} placeholder="https://bt.example.com" />
                 </div>
                 <div className="space-y-2">
-                  <Label>defaultPort</Label>
-                  <Input value={defaultPort} onChange={(e) => setDefaultPort(e.target.value)} />
+                  <Label>API Key</Label>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={baotaApiKey}
+                    onChange={(e) => setBaotaApiKey(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                  <Label className="cursor-pointer">HTTPS 跳过 TLS 校验</Label>
+                  <Switch checked={baotaSkipTls} onCheckedChange={setBaotaSkipTls} />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>DDNS 域名</Label>
+                    <Input value={ddnsHost} onChange={(e) => setDdnsHost(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>默认端口</Label>
+                    <Input value={defaultPort} onChange={(e) => setDefaultPort(e.target.value)} />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>syncIntervalSec</Label>
+                  <Label>同步间隔（秒）</Label>
                   <Input
                     type="number"
                     min={1}
@@ -398,62 +585,65 @@ const Setup: React.FC = () => {
                     onChange={(e) => setSyncIntervalSec(Number(e.target.value))}
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label>baotaSslCertName（可选，宝塔证书夹名称）</Label>
-                <Input value={baotaSslCertName} onChange={(e) => setBaotaSslCertName(e.target.value)} />
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>baotaSslPemContent（可选，PEM 证书内容）</Label>
-                  <Textarea
-                    className="min-h-[160px] font-mono text-xs"
-                    value={baotaSslPemContent}
-                    onChange={(e) => setBaotaSslPemContent(e.target.value)}
-                    placeholder="-----BEGIN CERTIFICATE-----"
-                  />
+                  <Label>SSL 证书名称（可选）</Label>
+                  <Input value={baotaSslCertName} onChange={(e) => setBaotaSslCertName(e.target.value)} />
                 </div>
-                <div className="space-y-2">
-                  <Label>baotaSslKeyContent（可选，KEY 私钥内容）</Label>
-                  <Textarea
-                    className="min-h-[160px] font-mono text-xs"
-                    value={baotaSslKeyContent}
-                    onChange={(e) => setBaotaSslKeyContent(e.target.value)}
-                    placeholder="-----BEGIN PRIVATE KEY-----"
-                  />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>PEM 证书内容（可选）</Label>
+                    <Textarea
+                      className="min-h-[120px] font-mono text-xs"
+                      value={baotaSslPemContent}
+                      onChange={(e) => setBaotaSslPemContent(e.target.value)}
+                      placeholder="-----BEGIN CERTIFICATE-----"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>KEY 私钥内容（可选）</Label>
+                    <Textarea
+                      className="min-h-[120px] font-mono text-xs"
+                      value={baotaSslKeyContent}
+                      onChange={(e) => setBaotaSslKeyContent(e.target.value)}
+                      placeholder="-----BEGIN PRIVATE KEY-----"
+                    />
+                  </div>
                 </div>
-              </div>
-              <p className="text-xs text-slate-500">
-                PEM/KEY 需成对填写；内容会在服务端校验后加密保存到平台存储，不写入 Ingress 注解。若同时配置证书名与 PEM/KEY，平台已保存的 PEM/KEY 优先。
-              </p>
-            </CardContent>
+                <p className="text-xs text-slate-500">PEM/KEY 需成对填写；内容在服务端加密保存。</p>
+              </CardContent>
+            )}
           </Card>
 
+          {/* 可选：Kubernetes */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Server className="h-5 w-5 text-emerald-600" />
-                可选：Kubernetes
-              </CardTitle>
-              <CardDescription>选择「不连接集群」可稍后在设置中配置</CardDescription>
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Server className="h-5 w-5 text-emerald-600" />
+                  Kubernetes
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">{k8sMode === "none" ? "稍后配置" : "直接配置"}</span>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-0">
               <div className="space-y-2">
-                <Label>k8s.mode</Label>
+                <Label>连接模式</Label>
                 <Select value={k8sMode} onValueChange={(v) => setK8sMode(v as K8sMode)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">不连接（稍后配置）</SelectItem>
-                    <SelectItem value="incluster">incluster</SelectItem>
-                    <SelectItem value="kubeconfig">kubeconfig</SelectItem>
+                    <SelectItem value="none">稍后配置</SelectItem>
+                    <SelectItem value="incluster">In-Cluster（本 Pod 在集群内）</SelectItem>
+                    <SelectItem value="kubeconfig">Kubeconfig（外部集群）</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               {k8sMode === "kubeconfig" && (
                 <div className="space-y-2">
-                  <Label>kubeconfigYaml</Label>
+                  <Label>Kubeconfig YAML</Label>
                   <Textarea
                     className="min-h-[180px] font-mono text-xs"
                     value={kubeconfigYaml}
@@ -465,69 +655,80 @@ const Setup: React.FC = () => {
             </CardContent>
           </Card>
 
+          {/* 可选：vCenter */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Database className="h-5 w-5 text-violet-600" />
-                可选：vCenter
-              </CardTitle>
-              <CardDescription>虚拟机列表会缓存在 Redis 中（TTL 可配），减少实时拉取</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>vcenterUrl</Label>
-                <Input value={vcenterUrl} onChange={(e) => setVcenterUrl(e.target.value)} />
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Database className="h-5 w-5 text-violet-600" />
+                  vCenter
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">{vcenterEnabled ? "直接配置" : "稍后配置"}</span>
+                  <Switch checked={vcenterEnabled} onCheckedChange={setVcenterEnabled} />
+                </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
+            </CardHeader>
+            {vcenterEnabled && (
+              <CardContent className="space-y-4 pt-0">
                 <div className="space-y-2">
-                  <Label>vcenterUser</Label>
-                  <Input value={vcenterUser} onChange={(e) => setVcenterUser(e.target.value)} />
+                  <Label>vCenter 地址</Label>
+                  <Input value={vcenterUrl} onChange={(e) => setVcenterUrl(e.target.value)} placeholder="https://vcenter.example.com" />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>用户名</Label>
+                    <Input value={vcenterUser} onChange={(e) => setVcenterUser(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>密码</Label>
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={vcenterPassword}
+                      onChange={(e) => setVcenterPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+                  <Label className="cursor-pointer">跳过 TLS 校验</Label>
+                  <Switch checked={vcenterInsecure} onCheckedChange={setVcenterInsecure} />
                 </div>
                 <div className="space-y-2">
-                  <Label>vcenterPassword</Label>
+                  <Label>Redis 缓存 TTL（秒）</Label>
                   <Input
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={vcenterPassword}
-                    onChange={(e) => setVcenterPassword(e.target.value)}
+                    type="number"
+                    min={10}
+                    value={vcenterCacheTtlSec}
+                    onChange={(e) => setVcenterCacheTtlSec(Number(e.target.value))}
                   />
                 </div>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-                <Label className="cursor-pointer">跳过 TLS</Label>
-                <Switch checked={vcenterInsecure} onCheckedChange={setVcenterInsecure} />
-              </div>
-              <div className="space-y-2">
-                <Label>vcenterCacheTtlSec（Redis 缓存秒数）</Label>
-                <Input
-                  type="number"
-                  min={10}
-                  value={vcenterCacheTtlSec}
-                  onChange={(e) => setVcenterCacheTtlSec(Number(e.target.value))}
-                />
-              </div>
-            </CardContent>
+              </CardContent>
+            )}
           </Card>
 
+          {/* 可选：SSH 持久化 */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">可选：SSH 虚拟机凭据持久化</CardTitle>
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">SSH 虚拟机凭据持久化</CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">{sshEnabled ? "启用" : "稍后配置"}</span>
+                  <Switch checked={sshEnabled} onCheckedChange={setSshEnabled} />
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <Select
-                value={sshBackend || "none"}
-                onValueChange={(v) => setSshBackend(v === "none" ? "" : "file")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">不启用</SelectItem>
-                  <SelectItem value="file">file（本地加密）</SelectItem>
-                </SelectContent>
-              </Select>
-            </CardContent>
+            {sshEnabled && (
+              <CardContent className="pt-0">
+                <div className="flex items-start gap-1.5 text-xs text-slate-500">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    启用后，云主机的 SSH 用户名、密码与密钥将加密持久化到本地文件，避免每次连接重新输入。
+                  </span>
+                </div>
+              </CardContent>
+            )}
           </Card>
 
           {err && (
