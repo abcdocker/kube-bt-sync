@@ -72,7 +72,7 @@ jobs:
           helm lint helm/kube-bt-sync
           helm template kube-bt-sync helm/kube-bt-sync --namespace kube-bt-sync >/tmp/legacy-chart.yaml
       - name: Scan repository
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.31.0
         with:
           scan-type: fs
           scan-ref: .
