@@ -21,9 +21,24 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiGetJson, apiPostJson, type SetupStatus } from "@/lib/api";
+import { setupText } from "@/i18n/setup";
 
 type K8sMode = "none" | "incluster" | "kubeconfig";
 type RedisMode = "standalone" | "sentinel" | "cluster";
+
+function parseFirstAddress(addr: string, fallbackHost: string, fallbackPort: number) {
+  const first = addr.split(",")[0]?.trim() ?? "";
+  const ipv6 = first.match(/^\[([^\]]+)]:(\d+)$/);
+  if (ipv6) return { host: ipv6[1], port: Number(ipv6[2]) || fallbackPort };
+  const separator = first.lastIndexOf(":");
+  if (separator > 0) {
+    const port = Number(first.slice(separator + 1));
+    if (Number.isInteger(port) && port > 0) {
+      return { host: first.slice(0, separator), port };
+    }
+  }
+  return { host: first || fallbackHost, port: fallbackPort };
+}
 
 const Setup: React.FC = () => {
   const qc = useQueryClient();
@@ -31,6 +46,8 @@ const Setup: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [useEnvironmentConnections, setUseEnvironmentConnections] = useState(false);
+  const [useEnvironmentEncryptionKey, setUseEnvironmentEncryptionKey] = useState(false);
 
   // 必填：平台 URL
   const [platformPublicUrl, setPlatformPublicUrl] = useState("https://");
@@ -86,7 +103,33 @@ const Setup: React.FC = () => {
     (async () => {
       try {
         const s = await apiGetJson<SetupStatus>("/api/setup/status");
-        if (!cancelled) setStatus(s);
+        if (!cancelled) {
+          setStatus(s);
+          const defaults = s.defaults;
+          if (defaults) {
+            if (defaults.platformPublicUrl) setPlatformPublicUrl(defaults.platformPublicUrl);
+            if (defaults.mysqlHost) setMysqlHost(defaults.mysqlHost);
+            if (defaults.mysqlPort) setMysqlPort(defaults.mysqlPort);
+            if (defaults.mysqlDatabase) setMysqlDatabase(defaults.mysqlDatabase);
+            if (defaults.mysqlUser) setMysqlUser(defaults.mysqlUser);
+            if (defaults.dashboardUser) setDashboardUser(defaults.dashboardUser);
+
+            const mode = defaults.redisMode;
+            if (mode === "standalone" || mode === "sentinel" || mode === "cluster") {
+              setRedisMode(mode);
+            }
+            const redisAddr = defaults.redisAddr?.trim() ?? "";
+            const parsed = parseFirstAddress(redisAddr, defaults.redisHost || "127.0.0.1", defaults.redisPort || 6379);
+            setRedisHost(defaults.redisHost || parsed.host);
+            setRedisPort(defaults.redisPort || parsed.port);
+            if (mode === "sentinel" && redisAddr) setRedisSentinelAddrs(redisAddr);
+            if (mode === "cluster" && redisAddr) setRedisClusterAddrs(redisAddr);
+            if (defaults.redisSentinelMaster) setRedisSentinelMaster(defaults.redisSentinelMaster);
+
+            setUseEnvironmentConnections(defaults.connectionsConfigured);
+            setUseEnvironmentEncryptionKey(defaults.encryptionKeyConfigured);
+          }
+        }
       } catch (e) {
         if (!cancelled) setErr((e as Error).message);
       } finally {
@@ -204,6 +247,8 @@ const Setup: React.FC = () => {
         sshSettingsDir: "",
         k8s,
         dashboardPasswordPlain,
+        useEnvironmentConnections,
+        useEnvironmentEncryptionKey,
       };
       await apiPostJson("/api/setup", body);
       toast.success("初始化保存成功");
@@ -277,6 +322,24 @@ const Setup: React.FC = () => {
               desc="MySQL 存储平台元数据；Redis 用于缓存与平台 KV 双写。"
             />
             <CardContent className="space-y-5">
+              {status?.defaults?.connectionsConfigured && (
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
+                  <div className="space-y-1">
+                    <Label className="text-blue-950 dark:text-blue-100">
+                      {setupText.environmentConnectionsTitle}
+                    </Label>
+                    <p className="text-xs text-blue-800 dark:text-blue-300">
+                      {setupText.environmentConnectionsDescription}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={useEnvironmentConnections}
+                    onCheckedChange={setUseEnvironmentConnections}
+                    aria-label={setupText.environmentConnectionsTitle}
+                  />
+                </div>
+              )}
+
               {/* 平台 URL */}
               <div className="space-y-2">
                 <Label>平台访问地址</Label>
@@ -301,7 +364,8 @@ const Setup: React.FC = () => {
                     <Input
                       value={mysqlDatabase}
                       onChange={(e) => setMysqlDatabase(e.target.value)}
-                      required
+                      required={!useEnvironmentConnections}
+                      disabled={useEnvironmentConnections}
                       placeholder="kubebt"
                     />
                   </div>
@@ -310,7 +374,8 @@ const Setup: React.FC = () => {
                     <Input
                       value={mysqlUser}
                       onChange={(e) => setMysqlUser(e.target.value)}
-                      required
+                      required={!useEnvironmentConnections}
+                      disabled={useEnvironmentConnections}
                       autoComplete="off"
                     />
                   </div>
@@ -320,12 +385,22 @@ const Setup: React.FC = () => {
                       type="password"
                       value={mysqlPassword}
                       onChange={(e) => setMysqlPassword(e.target.value)}
-                      required
+                      required={!useEnvironmentConnections}
+                      disabled={useEnvironmentConnections}
                       autoComplete="off"
                       spellCheck={false}
+                      placeholder={
+                        useEnvironmentConnections && status?.defaults?.mysqlPasswordConfigured
+                          ? setupText.environmentSecretPlaceholder
+                          : setupText.manualSecretPlaceholder
+                      }
                     />
                   </div>
                 </div>
+
+                {useEnvironmentConnections && status?.defaults?.mysqlDsnConfigured && !status.defaults.mysqlHost && (
+                  <FieldHint>{setupText.environmentMySQLDsn}</FieldHint>
+                )}
 
                 <Collapsible open={mysqlAdvancedOpen} onOpenChange={setMysqlAdvancedOpen}>
                   <CollapsibleTrigger asChild>
@@ -344,6 +419,7 @@ const Setup: React.FC = () => {
                         <Input
                           value={mysqlHost}
                           onChange={(e) => setMysqlHost(e.target.value)}
+                          disabled={useEnvironmentConnections}
                           placeholder="127.0.0.1"
                           autoComplete="off"
                         />
@@ -356,6 +432,7 @@ const Setup: React.FC = () => {
                           max={65535}
                           value={mysqlPort}
                           onChange={(e) => setMysqlPort(Number(e.target.value))}
+                          disabled={useEnvironmentConnections}
                         />
                       </div>
                     </div>
@@ -371,7 +448,11 @@ const Setup: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label>部署架构</Label>
-                  <Select value={redisMode} onValueChange={(v) => setRedisMode(v as RedisMode)}>
+                  <Select
+                    value={redisMode}
+                    onValueChange={(v) => setRedisMode(v as RedisMode)}
+                    disabled={useEnvironmentConnections}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -390,6 +471,7 @@ const Setup: React.FC = () => {
                       <Input
                         value={redisHost}
                         onChange={(e) => setRedisHost(e.target.value)}
+                        disabled={useEnvironmentConnections}
                         placeholder="127.0.0.1"
                         autoComplete="off"
                       />
@@ -402,6 +484,7 @@ const Setup: React.FC = () => {
                         max={65535}
                         value={redisPort}
                         onChange={(e) => setRedisPort(Number(e.target.value))}
+                        disabled={useEnvironmentConnections}
                       />
                     </div>
                     <div className="space-y-2 sm:col-span-2">
@@ -410,8 +493,14 @@ const Setup: React.FC = () => {
                         type="password"
                         value={redisPassword}
                         onChange={(e) => setRedisPassword(e.target.value)}
+                        disabled={useEnvironmentConnections}
                         autoComplete="off"
                         spellCheck={false}
+                        placeholder={
+                          useEnvironmentConnections && status?.defaults?.redisPasswordConfigured
+                            ? setupText.environmentSecretPlaceholder
+                            : setupText.manualSecretPlaceholder
+                        }
                       />
                     </div>
                   </div>
@@ -424,7 +513,8 @@ const Setup: React.FC = () => {
                       <Input
                         value={redisSentinelAddrs}
                         onChange={(e) => setRedisSentinelAddrs(e.target.value)}
-                        required={redisMode === "sentinel"}
+                        required={redisMode === "sentinel" && !useEnvironmentConnections}
+                        disabled={useEnvironmentConnections}
                         placeholder="host1:26379,host2:26379"
                         autoComplete="off"
                       />
@@ -436,7 +526,8 @@ const Setup: React.FC = () => {
                         <Input
                           value={redisSentinelMaster}
                           onChange={(e) => setRedisSentinelMaster(e.target.value)}
-                          required={redisMode === "sentinel"}
+                          required={redisMode === "sentinel" && !useEnvironmentConnections}
+                          disabled={useEnvironmentConnections}
                           placeholder="mymaster"
                         />
                       </div>
@@ -446,8 +537,14 @@ const Setup: React.FC = () => {
                           type="password"
                           value={redisPassword}
                           onChange={(e) => setRedisPassword(e.target.value)}
+                          disabled={useEnvironmentConnections}
                           autoComplete="off"
                           spellCheck={false}
+                          placeholder={
+                            useEnvironmentConnections && status?.defaults?.redisPasswordConfigured
+                              ? setupText.environmentSecretPlaceholder
+                              : setupText.manualSecretPlaceholder
+                          }
                         />
                       </div>
                     </div>
@@ -461,7 +558,8 @@ const Setup: React.FC = () => {
                       <Input
                         value={redisClusterAddrs}
                         onChange={(e) => setRedisClusterAddrs(e.target.value)}
-                        required={redisMode === "cluster"}
+                        required={redisMode === "cluster" && !useEnvironmentConnections}
+                        disabled={useEnvironmentConnections}
                         placeholder="host1:6379,host2:6379,host3:6379"
                         autoComplete="off"
                       />
@@ -473,8 +571,14 @@ const Setup: React.FC = () => {
                         type="password"
                         value={redisPassword}
                         onChange={(e) => setRedisPassword(e.target.value)}
+                        disabled={useEnvironmentConnections}
                         autoComplete="off"
                         spellCheck={false}
+                        placeholder={
+                          useEnvironmentConnections && status?.defaults?.redisPasswordConfigured
+                            ? setupText.environmentSecretPlaceholder
+                            : setupText.manualSecretPlaceholder
+                        }
                       />
                     </div>
                   </div>
@@ -483,18 +587,42 @@ const Setup: React.FC = () => {
 
               {/* 加密密钥 */}
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-slate-500" />
-                  <Label>加密密钥（Encryption Key）</Label>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-slate-500" />
+                    <Label>加密密钥（Encryption Key）</Label>
+                  </div>
+                  {status?.defaults?.encryptionKeyConfigured && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        {setupText.environmentEncryptionKey}
+                      </span>
+                      <Switch
+                        checked={useEnvironmentEncryptionKey}
+                        onCheckedChange={setUseEnvironmentEncryptionKey}
+                        aria-label={setupText.environmentEncryptionKey}
+                      />
+                    </div>
+                  )}
                 </div>
                 <Input
                   value={encryptionKey}
                   onChange={(e) => setEncryptionKey(e.target.value)}
-                  required
+                  required={!useEnvironmentEncryptionKey}
+                  disabled={useEnvironmentEncryptionKey}
                   minLength={16}
                   autoComplete="off"
-                  placeholder="至少 16 位随机字符串，建议 32 位"
+                  placeholder={
+                    useEnvironmentEncryptionKey
+                      ? setupText.environmentSecretPlaceholder
+                      : "至少 16 位随机字符串，建议 32 位"
+                  }
                 />
+                {useEnvironmentEncryptionKey && (
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    {setupText.environmentEncryptionKeyDescription}
+                  </p>
+                )}
                 <div className="flex items-start gap-1.5 text-xs text-slate-500 mt-1">
                   <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>

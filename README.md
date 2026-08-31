@@ -141,6 +141,18 @@ PLATFORM_PUBLIC_URL=http://<服务器IP>:18081
 
 然后访问 `http://<服务器IP>:18081/setup`。不要将该 HTTP 端口直接暴露到公网；生产环境应使用防火墙、反向代理和 HTTPS。
 
+初始化脚本只会把随机凭据写入 `.env`，不会在 `docker compose up` 日志中打印。`docker compose config --quiet` 也不会显示配置；请注意，不带 `--quiet` 的 `docker compose config` 会展开变量并可能在终端显示密码。
+
+Compose 容器之间使用以下连接信息：
+
+| 服务 | 容器内地址 | 用户 / 数据库 | 密码变量 |
+|---|---|---|---|
+| MySQL | `mysql:3306` | `MYSQL_USER` / `MYSQL_DATABASE`（默认均为 `kube_bt_sync`） | `MYSQL_PASSWORD` |
+| MySQL root | `mysql:3306` | `root` | `MYSQL_ROOT_PASSWORD` |
+| Redis | `redis:6379` | 无用户名 | `REDIS_PASSWORD` |
+
+MySQL 和 Redis 默认不映射到宿主机端口，仅供 Compose 网络内的平台容器访问。首次打开 `/setup` 时，向导会自动读取 `.env` 注入的非敏感连接信息；数据库密码、Redis 密码和 `KUBEBT_ENCRYPTION_KEY` 不会返回浏览器，保存时由服务端直接沿用。用户只需确认连接配置并设置平台管理员密码；如需使用外部 MySQL/Redis，可关闭向导中的“使用运行环境配置”后手动填写。
+
 如果国内网络拉取 Docker Hub 或 `gcr.io` 超时，可在 `/etc/docker/daemon.json` 中合并信任的 Docker Hub 镜像加速地址（不要覆盖已有配置），重启 Docker，并在 `.env` 中设置：
 
 ```dotenv

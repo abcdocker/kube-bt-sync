@@ -179,6 +179,24 @@ export type SetupStatus = {
   initialized: boolean;
   dataDir: string;
   version: number;
+  defaults?: {
+    connectionsConfigured: boolean;
+    platformPublicUrl?: string;
+    mysqlDsnConfigured: boolean;
+    mysqlHost?: string;
+    mysqlPort?: number;
+    mysqlDatabase?: string;
+    mysqlUser?: string;
+    mysqlPasswordConfigured: boolean;
+    redisAddr?: string;
+    redisHost?: string;
+    redisPort?: number;
+    redisMode?: string;
+    redisSentinelMaster?: string;
+    redisPasswordConfigured: boolean;
+    encryptionKeyConfigured: boolean;
+    dashboardUser?: string;
+  };
 };
 
 /** GET /api/config 中宝塔多实例摘要（无 apiKey 明文） */
