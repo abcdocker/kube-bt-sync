@@ -1,6 +1,16 @@
 import React, { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Database, Hexagon, KeyRound, Server, Shield, ChevronDown, ChevronRight, Info } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Hexagon,
+  Info,
+  KeyRound,
+  Server,
+  Shield,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -297,46 +307,107 @@ const Setup: React.FC = () => {
     <p className="text-xs text-slate-500 mt-1">{children}</p>
   );
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-100 to-slate-200 py-10 px-4 font-sans">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 shadow-lg">
-            <Hexagon className="text-white" size={32} strokeWidth={2.5} />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">首次初始化</h1>
-          <p className="max-w-xl text-sm text-slate-600">
-            仅需配置平台 URL、数据库、Redis 与管理员账号即可开始使用。
-            宝塔同步、K8s、vCenter 等功能可在初始化完成后于「系统设置」中开启。
-            数据目录：{" "}
-            <span className="font-mono text-xs">{status?.dataDir ?? "…"}</span>
-          </p>
-        </div>
+  const environmentDefaults = status?.defaults;
+  const environmentMySQLAddress = `${environmentDefaults?.mysqlHost || "MySQL"}:${environmentDefaults?.mysqlPort || 3306}`;
+  const environmentRedisAddress =
+    environmentDefaults?.redisAddr ||
+    `${environmentDefaults?.redisHost || "Redis"}:${environmentDefaults?.redisPort || 6379}`;
 
-        <form onSubmit={onSubmit} className="space-y-6">
+  return (
+    <div className="min-h-dvh bg-slate-100 px-4 py-6 font-sans sm:px-6 lg:py-8">
+      <div className="mx-auto grid w-full max-w-6xl items-start gap-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-8">
+        <aside className="overflow-hidden rounded-2xl bg-slate-950 p-6 text-white shadow-xl lg:sticky lg:top-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500 shadow-lg shadow-blue-950/30">
+              <Hexagon size={26} strokeWidth={2.5} />
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-blue-300">Kube-BT-Sync</p>
+              <h1 className="mt-1 text-xl font-semibold">首次初始化</h1>
+            </div>
+          </div>
+
+          <p className="mt-5 text-sm leading-6 text-slate-300">
+            确认运行环境连接，设置管理员密码后即可进入平台。可选集成可以稍后在系统设置中完成。
+          </p>
+
+          <ol className="mt-7 space-y-4 text-sm">
+            {[
+              ["平台与数据存储", "确认访问地址和连接"],
+              ["管理员账号", "设置首个登录账号"],
+              ["可选集成", "按需开启，也可稍后配置"],
+            ].map(([title, description], index) => (
+              <li key={title} className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold text-blue-200">
+                  {index + 1}
+                </span>
+                <span>
+                  <span className="block font-medium text-slate-100">{title}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-slate-400">{description}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-7 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-medium text-slate-300">数据目录</p>
+            <p className="mt-1 break-all font-mono text-[11px] leading-5 text-slate-400">
+              {status?.dataDir ?? "…"}
+            </p>
+          </div>
+        </aside>
+
+        <main className="min-w-0">
+          <form onSubmit={onSubmit} className="space-y-4">
           {/* 必填：平台与数据存储 */}
-          <Card>
+          <Card className="border-slate-200 shadow-sm">
             <SectionHeader
               icon={<KeyRound className="h-5 w-5 text-blue-600" />}
               title="必填：平台与数据存储"
               desc="MySQL 存储平台元数据；Redis 用于缓存与平台 KV 双写。"
             />
             <CardContent className="space-y-5">
-              {status?.defaults?.connectionsConfigured && (
-                <div className="flex items-start justify-between gap-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
-                  <div className="space-y-1">
-                    <Label className="text-blue-950 dark:text-blue-100">
-                      {setupText.environmentConnectionsTitle}
-                    </Label>
-                    <p className="text-xs text-blue-800 dark:text-blue-300">
-                      {setupText.environmentConnectionsDescription}
-                    </p>
+              {environmentDefaults?.connectionsConfigured && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex gap-3">
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+                      <div className="space-y-1">
+                        <Label className="text-blue-950">{setupText.environmentConnectionsTitle}</Label>
+                        <p className="text-xs leading-5 text-blue-800">
+                          {setupText.environmentConnectionsDescription}
+                        </p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={useEnvironmentConnections}
+                      onCheckedChange={setUseEnvironmentConnections}
+                      aria-label={setupText.environmentConnectionsTitle}
+                    />
                   </div>
-                  <Switch
-                    checked={useEnvironmentConnections}
-                    onCheckedChange={setUseEnvironmentConnections}
-                    aria-label={setupText.environmentConnectionsTitle}
-                  />
+
+                  {useEnvironmentConnections && (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-blue-100 bg-white/80 px-3 py-2.5">
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">MySQL</p>
+                        <p className="mt-1 truncate font-mono text-xs text-slate-800" title={environmentMySQLAddress}>
+                          {environmentMySQLAddress}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {environmentDefaults.mysqlDatabase || "已配置数据库"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-blue-100 bg-white/80 px-3 py-2.5">
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Redis</p>
+                        <p className="mt-1 truncate font-mono text-xs text-slate-800" title={environmentRedisAddress}>
+                          {environmentRedisAddress}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {environmentDefaults.redisMode || "standalone"} · 密码由服务端沿用
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -352,6 +423,8 @@ const Setup: React.FC = () => {
                 <FieldHint>浏览器访问本平台的根地址，含协议与域名。</FieldHint>
               </div>
 
+              {!useEnvironmentConnections && (
+                <>
               {/* MySQL */}
               <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
                 <div className="flex items-center gap-2">
@@ -584,6 +657,8 @@ const Setup: React.FC = () => {
                   </div>
                 )}
               </div>
+                </>
+              )}
 
               {/* 加密密钥 */}
               <div className="space-y-2">
@@ -605,23 +680,20 @@ const Setup: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <Input
-                  value={encryptionKey}
-                  onChange={(e) => setEncryptionKey(e.target.value)}
-                  required={!useEnvironmentEncryptionKey}
-                  disabled={useEnvironmentEncryptionKey}
-                  minLength={16}
-                  autoComplete="off"
-                  placeholder={
-                    useEnvironmentEncryptionKey
-                      ? setupText.environmentSecretPlaceholder
-                      : "至少 16 位随机字符串，建议 32 位"
-                  }
-                />
-                {useEnvironmentEncryptionKey && (
-                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                {useEnvironmentEncryptionKey ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs text-blue-800">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600" />
                     {setupText.environmentEncryptionKeyDescription}
-                  </p>
+                  </div>
+                ) : (
+                  <Input
+                    value={encryptionKey}
+                    onChange={(e) => setEncryptionKey(e.target.value)}
+                    required
+                    minLength={16}
+                    autoComplete="off"
+                    placeholder="至少 16 位随机字符串，建议 32 位"
+                  />
                 )}
                 <div className="flex items-start gap-1.5 text-xs text-slate-500 mt-1">
                   <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -660,10 +732,17 @@ const Setup: React.FC = () => {
             </CardContent>
           </Card>
 
+          <div className="flex items-end justify-between gap-4 px-1 pt-2">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">可选集成</h2>
+              <p className="mt-1 text-xs text-slate-500">不影响首次登录，可以全部稍后配置。</p>
+            </div>
+          </div>
+
           {/* 可选：宝塔同步 */}
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="py-4">
+              <div className="flex items-center justify-between gap-4">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Server className="h-5 w-5 text-amber-600" />
                   Ingress ↔ 宝塔同步
@@ -743,23 +822,15 @@ const Setup: React.FC = () => {
           </Card>
 
           {/* 可选：Kubernetes */}
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="py-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Server className="h-5 w-5 text-emerald-600" />
                   Kubernetes
                 </CardTitle>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">{k8sMode === "none" ? "稍后配置" : "直接配置"}</span>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-              <div className="space-y-2">
-                <Label>连接模式</Label>
                 <Select value={k8sMode} onValueChange={(v) => setK8sMode(v as K8sMode)}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full sm:w-[240px]" aria-label="Kubernetes 连接模式">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -769,7 +840,9 @@ const Setup: React.FC = () => {
                   </SelectContent>
                 </Select>
               </div>
-              {k8sMode === "kubeconfig" && (
+            </CardHeader>
+            {k8sMode === "kubeconfig" && (
+              <CardContent className="pb-5 pt-0">
                 <div className="space-y-2">
                   <Label>Kubeconfig YAML</Label>
                   <Textarea
@@ -779,14 +852,14 @@ const Setup: React.FC = () => {
                     required={k8sMode === "kubeconfig"}
                   />
                 </div>
-              )}
-            </CardContent>
+              </CardContent>
+            )}
           </Card>
 
           {/* 可选：vCenter */}
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="py-4">
+              <div className="flex items-center justify-between gap-4">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Database className="h-5 w-5 text-violet-600" />
                   vCenter
@@ -837,9 +910,9 @@ const Setup: React.FC = () => {
           </Card>
 
           {/* 可选：SSH 持久化 */}
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="py-4">
+              <div className="flex items-center justify-between gap-4">
                 <CardTitle className="text-lg">SSH 虚拟机凭据持久化</CardTitle>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-500">{sshEnabled ? "启用" : "稍后配置"}</span>
@@ -865,10 +938,13 @@ const Setup: React.FC = () => {
             </div>
           )}
 
-          <Button type="submit" className="w-full" size="lg" disabled={submitting}>
-            {submitting ? "保存中…" : "保存并进入登录"}
-          </Button>
-        </form>
+          <div className="sticky bottom-0 z-10 -mx-2 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-white/85">
+            <Button type="submit" className="w-full" size="lg" disabled={submitting}>
+              {submitting ? "保存中…" : "保存并进入登录"}
+            </Button>
+          </div>
+          </form>
+        </main>
       </div>
     </div>
   );
