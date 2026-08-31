@@ -6,7 +6,7 @@
 // biome-ignore lint: disable
 export {}
 declare global {
-  const Activity: typeof import('lucide-react').Activity
+  const Activity: typeof import('react').Activity
   const ActivityIcon: typeof import('lucide-react').ActivityIcon
   const AlertCircle: typeof import('lucide-react').AlertCircle
   const AlertTriangle: typeof import('lucide-react').AlertTriangle
@@ -40,6 +40,7 @@ declare global {
   const ChevronLeftIcon: typeof import('lucide-react').ChevronLeftIcon
   const ChevronRight: typeof import('lucide-react').ChevronRight
   const ChevronRightIcon: typeof import('lucide-react').ChevronRightIcon
+  const ChevronUp: typeof import('lucide-react').ChevronUp
   const ChevronUpIcon: typeof import('lucide-react').ChevronUpIcon
   const Chrome: typeof import('lucide-react').Chrome
   const CircleCheckIcon: typeof import('lucide-react').CircleCheckIcon
@@ -70,6 +71,7 @@ declare global {
   const FilePlus: typeof import('lucide-react').FilePlus
   const FilePlus2: typeof import('lucide-react').FilePlus2
   const FileText: typeof import('lucide-react').FileText
+  const Files: typeof import('lucide-react').Files
   const Filter: typeof import('lucide-react').Filter
   const Flame: typeof import('lucide-react').Flame
   const Folder: typeof import('lucide-react').Folder
@@ -83,6 +85,7 @@ declare global {
   const Gauge: typeof import('lucide-react').Gauge
   const GitBranch: typeof import('lucide-react').GitBranch
   const Globe: typeof import('lucide-react').Globe
+  const Globe2: typeof import('lucide-react').Globe2
   const Grid: typeof import('lucide-react').Grid
   const GripVertical: typeof import('lucide-react').GripVertical
   const GripVerticalIcon: typeof import('lucide-react').GripVerticalIcon
@@ -99,7 +102,9 @@ declare global {
   const Inspect: typeof import('lucide-react').Inspect
   const Key: typeof import('lucide-react').Key
   const KeyRound: typeof import('lucide-react').KeyRound
+  const Keyboard: typeof import('lucide-react').Keyboard
   const Layers: typeof import('lucide-react').Layers
+  const Layers3: typeof import('lucide-react').Layers3
   const Layout: typeof import('lucide-react').Layout
   const LayoutDashboard: typeof import('lucide-react').LayoutDashboard
   const LayoutGrid: typeof import('lucide-react').LayoutGrid
@@ -174,6 +179,8 @@ declare global {
   const ToggleLeft: typeof import('lucide-react').ToggleLeft
   const ToggleRight: typeof import('lucide-react').ToggleRight
   const Trash2: typeof import('lucide-react').Trash2
+  const TrendingDown: typeof import('lucide-react').TrendingDown
+  const TrendingUp: typeof import('lucide-react').TrendingUp
   const TriangleAlertIcon: typeof import('lucide-react').TriangleAlertIcon
   const Upload: typeof import('lucide-react').Upload
   const User: typeof import('lucide-react').User

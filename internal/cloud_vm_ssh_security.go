@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	mathrand "math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -144,14 +145,23 @@ func captchaStoreKey(instanceID int64, captchaID string) string {
 	return fmt.Sprintf("%d:%s", instanceID, captchaID)
 }
 
+func randIntRangeFallback(min, max int) int {
+	if min > max {
+		min, max = max, min
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max-min+1)))
+	if err == nil && n != nil {
+		return int(n.Int64()) + min
+	}
+	return mathrand.Intn(max-min+1) + min
+}
+
 func issueCloudVMSSHCaptcha(instanceID int64) (captchaID, question string) {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	captchaID = hex.EncodeToString(b)
-	a, _ := rand.Int(rand.Reader, big.NewInt(12))
-	bn, _ := rand.Int(rand.Reader, big.NewInt(12))
-	ai := int(a.Int64()) + 1
-	bi := int(bn.Int64()) + 1
+	ai := randIntRangeFallback(1, 12)
+	bi := randIntRangeFallback(1, 12)
 	sum := ai + bi
 	answer := fmt.Sprintf("%d", sum)
 	question = fmt.Sprintf("%d + %d = ?", ai, bi)

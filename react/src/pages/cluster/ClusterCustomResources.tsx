@@ -96,7 +96,7 @@ function apiPathCrOne(crd: string, namespaceSeg: string, obj: string) {
 
 export function ClusterCustomResourcesLayout() {
   return (
-    <div className="space-y-5 px-1 pb-10">
+    <div className="space-y-5 px-1 pb-2 sm:pb-10">
       <Outlet />
     </div>
   );

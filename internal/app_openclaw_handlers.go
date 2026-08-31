@@ -204,25 +204,24 @@ func handleAppOpenClawGatewayProbe(c *gin.Context, app *ServerApp) {
 }
 
 type appOpenClawDeployBody struct {
-	Namespace           string `json:"namespace"`
-	DeploymentName      string `json:"deploymentName"`
-	ServiceName         string `json:"serviceName"`
-	NodePort            int32  `json:"nodePort"`
-	ExposeMode          string `json:"exposeMode"`
-	IngressName         string `json:"ingressName"`
-	IngressHost         string `json:"ingressHost"`
-	IngressTLSScheme    string `json:"ingressTlsScheme"`
-	BaotaSyncAnnotation string `json:"baotaSyncAnnotation"`
-	Image               string `json:"image"`
-	InitContainerImage  string `json:"initContainerImage"`
-	OpenAIAPIKey        string `json:"openaiApiKey"`
-	OpenAIBaseURL       string `json:"openaiBaseUrl"`
-	GeminiAPIKey        string `json:"geminiApiKey"`
-	ModelPreset         string `json:"modelPreset"`
-	ChatModel           string `json:"chatModel"`
-	DisplayName         string `json:"displayName"`
-	HttpProxyURL        string `json:"httpProxyUrl"`
-	EgressCloudVmID     string `json:"egressCloudVmId"`
+	Namespace          string `json:"namespace"`
+	DeploymentName     string `json:"deploymentName"`
+	ServiceName        string `json:"serviceName"`
+	NodePort           int32  `json:"nodePort"`
+	ExposeMode         string `json:"exposeMode"`
+	IngressName        string `json:"ingressName"`
+	IngressHost        string `json:"ingressHost"`
+	IngressTLSScheme   string `json:"ingressTlsScheme"`
+	Image              string `json:"image"`
+	InitContainerImage string `json:"initContainerImage"`
+	OpenAIAPIKey       string `json:"openaiApiKey"`
+	OpenAIBaseURL      string `json:"openaiBaseUrl"`
+	GeminiAPIKey       string `json:"geminiApiKey"`
+	ModelPreset        string `json:"modelPreset"`
+	ChatModel          string `json:"chatModel"`
+	DisplayName        string `json:"displayName"`
+	HttpProxyURL       string `json:"httpProxyUrl"`
+	EgressCloudVmID    string `json:"egressCloudVmId"`
 	// RBACPreset 空则使用 bootstrap 的 defaultRbacPreset；非空须为 readonly | edit | admin
 	RBACPreset string `json:"rbacPreset"`
 	// ToolsProfile 空则 full；须为 minimal | coding | full
@@ -306,26 +305,25 @@ func handleAppOpenClawK8sDeploy(c *gin.Context, app *ServerApp) {
 	toolsProf := NormalizeOpenClawToolsProfile(body.ToolsProfile)
 	promptPacks := SanitizePromptPackIDs(body.PromptPacks)
 	inst, gwPlain, err := ApplyOpenClawToCluster(c.Request.Context(), app.K8s(), nodeIP, OpenClawK8sDeployOpts{
-		Namespace:           body.Namespace,
-		DeploymentName:      body.DeploymentName,
-		ServiceName:         body.ServiceName,
-		NodePort:            body.NodePort,
-		ExposeMode:          body.ExposeMode,
-		IngressName:         body.IngressName,
-		IngressHost:         body.IngressHost,
-		IngressTLSScheme:    body.IngressTLSScheme,
-		BaotaSyncAnnotation: body.BaotaSyncAnnotation,
-		Image:               body.Image,
-		InitContainerImage:  body.InitContainerImage,
-		OpenAIAPIKey:        body.OpenAIAPIKey,
-		OpenAIBaseURL:       openAIBaseApplied,
-		GeminiAPIKey:        body.GeminiAPIKey,
-		ModelPreset:         body.ModelPreset,
-		ChatModel:           chatModelEff,
-		HttpProxyURL:        httpProxyEff,
-		RBACPreset:          rbacForDeploy,
-		ToolsProfile:        toolsProf,
-		PromptPacks:         promptPacks,
+		Namespace:          body.Namespace,
+		DeploymentName:     body.DeploymentName,
+		ServiceName:        body.ServiceName,
+		NodePort:           body.NodePort,
+		ExposeMode:         body.ExposeMode,
+		IngressName:        body.IngressName,
+		IngressHost:        body.IngressHost,
+		IngressTLSScheme:   body.IngressTLSScheme,
+		Image:              body.Image,
+		InitContainerImage: body.InitContainerImage,
+		OpenAIAPIKey:       body.OpenAIAPIKey,
+		OpenAIBaseURL:      openAIBaseApplied,
+		GeminiAPIKey:       body.GeminiAPIKey,
+		ModelPreset:        body.ModelPreset,
+		ChatModel:          chatModelEff,
+		HttpProxyURL:       httpProxyEff,
+		RBACPreset:         rbacForDeploy,
+		ToolsProfile:       toolsProf,
+		PromptPacks:        promptPacks,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

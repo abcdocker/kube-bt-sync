@@ -32,6 +32,7 @@ export type CloudHostSSHSettings = {
   passwordSet?: boolean;
   privateKeySet?: boolean;
   insecureHostKey?: boolean;
+  hostKeyFingerprint?: string;
 };
 
 type CloudHostSshTerminalProps = {

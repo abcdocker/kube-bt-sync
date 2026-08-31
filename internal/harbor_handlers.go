@@ -310,7 +310,7 @@ func harborFormatHarborAuthFailure(code int, b []byte) (human string, items []ha
 // harborUnauthorizedUserHint 说明本平台账号与 Harbor 凭据、Harbor「系统管理员」与项目成员的区别（用于 401/403 → 502 的 JSON hint 字段）。
 func harborUnauthorizedUserHint(requestPath string) string {
 	var b strings.Builder
-	b.WriteString("【常见误解】您在 kube-bt-sync 控制台是否为「管理员」、登录名是否为 abcdocker，只决定本平台权限；访问 Harbor API 时始终使用「集群设置 → 运行时」中的 harborUsername / harborPassword（或 Robot 名+密钥）。两者不必相同。\n\n")
+	b.WriteString("【常见误解】您在 kube-bt-sync 控制台是否为「管理员」、登录名是否为 platform-admin，只决定本平台权限；访问 Harbor API 时始终使用「集群设置 → 运行时」中的 harborUsername / harborPassword（或 Robot 名+密钥）。两者不必相同。\n\n")
 	if strings.Contains(requestPath, "/harbor/statistics") {
 		b.WriteString("【statistics】Harbor 的 GET /statistics 在 OpenAPI 中标注可能返回 401：通常仅 Harbor「系统管理员」用户可调用。\n\n")
 		b.WriteString("【Robot】Harbor 按设计将 statistics 视为非资源类接口，系统级 Robot 即使勾选全部读权限，仍常返回 401 或数据不完整（与是否「授权」无关，属 Harbor 对 Robot 的限制）。\n\n")
@@ -553,7 +553,7 @@ func harborStatisticsAggregateFromProjects(ctx context.Context, cfg Config) (map
 
 	return map[string]interface{}{
 		"total_project_count": totalProjects,
-		"total_repo_count":  totalRepos,
+		"total_repo_count":    totalRepos,
 	}, nil
 }
 

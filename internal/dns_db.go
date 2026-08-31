@@ -246,9 +246,9 @@ func dnsDomainGet(ctx context.Context, db *sql.DB, id int) (*DnsDomain, error) {
 }
 
 func dnsDomainInsert(ctx context.Context, db *sql.DB, name string, accountID int, icpBeian, expireAt, remark, createdBy string) (int64, error) {
-	var exp interface{}
-	if expireAt != "" {
-		exp = expireAt
+	var exp sql.NullString
+	if strings.TrimSpace(expireAt) != "" {
+		exp = sql.NullString{String: strings.TrimSpace(expireAt), Valid: true}
 	}
 	res, err := db.ExecContext(ctx,
 		`INSERT INTO dns_domains (name, account_id, icp_beian, expire_at, remark, created_by) VALUES (?,?,?,?,?,?)`,
@@ -260,9 +260,9 @@ func dnsDomainInsert(ctx context.Context, db *sql.DB, name string, accountID int
 }
 
 func dnsDomainUpdate(ctx context.Context, db *sql.DB, id int, name string, accountID int, icpBeian, expireAt, remark string) error {
-	var exp interface{}
-	if expireAt != "" {
-		exp = expireAt
+	var exp sql.NullString
+	if strings.TrimSpace(expireAt) != "" {
+		exp = sql.NullString{String: strings.TrimSpace(expireAt), Valid: true}
 	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE dns_domains SET name=?, account_id=?, icp_beian=?, expire_at=?, remark=?, updated_at=NOW() WHERE id=?`,

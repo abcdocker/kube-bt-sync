@@ -58,7 +58,6 @@ const IngressGraphicalForm: React.FC<IngressGraphicalFormProps> = ({
   const [serviceName, setServiceName] = useState("");
   const [port, setPort] = useState<number>(80);
   const [domain, setDomain] = useState("");
-  const [syncAnnotation, setSyncAnnotation] = useState<"i4t" | "kube-bt">("i4t");
   const [baotaSyncEnabled, setBaotaSyncEnabled] = useState(defaultBaotaSyncEnabled);
   const [baotaHttpsEnabled, setBaotaHttpsEnabled] = useState(false);
   const [baotaSslCertName, setBaotaSslCertName] = useState("");
@@ -132,7 +131,6 @@ const IngressGraphicalForm: React.FC<IngressGraphicalFormProps> = ({
       enableBaotaSync: baotaSyncEnabled,
       enableBaotaHttps: baotaSyncEnabled && baotaHttpsEnabled,
       baotaSslCertName: certName,
-      syncAnnotation,
       customDdnsPort: "",
       ddnsScheme: effectiveOriginScheme,
       baotaTargetId: multiBaota.length > 1 ? baotaTargetId.trim() : "",
@@ -162,7 +160,10 @@ const IngressGraphicalForm: React.FC<IngressGraphicalFormProps> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${className}`}>
+    <form
+      onSubmit={handleSubmit}
+      className={`grid min-w-0 gap-4 [&_input]:min-w-0 [&_input]:w-full [&_select]:min-w-0 [&_select]:w-full sm:grid-cols-2 lg:grid-cols-3 ${className}`}
+    >
       {lockedNamespace ? (
         <div className="flex flex-col gap-1 text-sm sm:col-span-2 lg:col-span-3">
           <span className="font-medium text-slate-700">命名空间</span>
@@ -262,17 +263,9 @@ const IngressGraphicalForm: React.FC<IngressGraphicalFormProps> = ({
 
       {baotaSyncEnabled ? (
         <>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-gray-700">同步注解键</span>
-            <select
-              className="rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
-              value={syncAnnotation}
-              onChange={(e) => setSyncAnnotation(e.target.value === "kube-bt" ? "kube-bt" : "i4t")}
-            >
-              <option value="i4t">i4t.com/baota-sync（README 默认）</option>
-              <option value="kube-bt">kube-bt-sync.io/baota-sync</option>
-            </select>
-          </label>
+          <p className="text-xs text-gray-500">
+            同步注解：<code className="rounded bg-gray-100 px-0.5">kube-bt-sync.io/baota-sync</code>
+          </p>
           {multiBaota.length > 1 ? (
             <label className="flex flex-col gap-1 text-sm sm:col-span-2 lg:col-span-2">
               <span className="font-medium text-gray-700">宝塔实例（写入 baota-target 注解）</span>

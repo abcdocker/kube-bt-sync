@@ -510,7 +510,6 @@ const AppCenterOpenClaw: React.FC = () => {
   const [ingressName, setIngressName] = useState("");
   const [ingressHost, setIngressHost] = useState("");
   const [ingressTlsScheme, setIngressTlsScheme] = useState<"https" | "http">("https");
-  const [baotaSyncAnnotation, setBaotaSyncAnnotation] = useState<"i4t" | "kube-bt">("i4t");
   const [preset, setPreset] = useState<string>("minimax-m2.7");
   const [chatModel, setChatModel] = useState<string>(() => defaultChatModelForPreset("minimax-m2.7"));
   const [openaiKey, setOpenaiKey] = useState("");
@@ -673,7 +672,6 @@ const AppCenterOpenClaw: React.FC = () => {
         ingressName: ingressName.trim(),
         ingressHost: ingressHost.trim(),
         ingressTlsScheme,
-        baotaSyncAnnotation,
         image: image.trim(),
         initContainerImage: initContainerImage.trim(),
         modelPreset: preset,
@@ -1491,19 +1489,8 @@ const AppCenterOpenClaw: React.FC = () => {
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label>宝塔同步注解（与「发布 Ingress」一致）</Label>
-                          <Select
-                            value={baotaSyncAnnotation}
-                            onValueChange={(v) => setBaotaSyncAnnotation(v as "i4t" | "kube-bt")}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="i4t">i4t.com/baota-sync</SelectItem>
-                              <SelectItem value="kube-bt">kube-bt-sync.io/baota-sync</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <Label>宝塔同步注解</Label>
+                          <code className="block rounded bg-slate-100 px-2 py-1 text-xs">kube-bt-sync.io/baota-sync</code>
                           <p className="text-[11px] text-slate-500">
                             Service 为 ClusterIP；Ingress 路径 <code className="rounded bg-slate-100 px-0.5">/</code> 指向网关端口{" "}
                             18789。请确保宝塔侧已配置对应同步规则。

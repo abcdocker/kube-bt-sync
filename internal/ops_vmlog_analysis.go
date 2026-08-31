@@ -111,13 +111,13 @@ func normalizeMsgDedupeKey(msg string) string {
 }
 
 type vmlogAggLine struct {
-	firstT   time.Time
-	lastT    time.Time
-	ns       string
-	src      string
-	msg      string
-	count    int
-	hasTime  bool
+	firstT  time.Time
+	lastT   time.Time
+	ns      string
+	src     string
+	msg     string
+	count   int
+	hasTime bool
 }
 
 func buildVmLogSampleForAI(matched []map[string]any, sampleLimit int) string {
@@ -132,7 +132,7 @@ func buildVmLogSampleForAI(matched []map[string]any, sampleLimit int) string {
 	order := []string{}
 
 	for i, row := range merged {
-		msg := vmlogRowMsg(row)
+		msg := redactLogTextForAI(vmlogRowMsg(row))
 		key := normalizeMsgDedupeKey(msg)
 		if key == "" {
 			key = fmt.Sprintf("_empty_line_%d", i)
@@ -258,6 +258,8 @@ type opsVmLogOpenclawAnalyzeBody struct {
 	K8sPodName       string `json:"k8sPodName"`
 	Keyword          string `json:"keyword"`
 	KeywordField     string `json:"keywordField"`
+	Host             string `json:"host"`
+	Level            string `json:"level"`
 	WindowMinutes    int    `json:"windowMinutes"`
 	StartTime        string `json:"startTime"`
 	EndTime          string `json:"endTime"`
@@ -279,17 +281,17 @@ type opsVmLogOpenclawAnalyzeRowBody struct {
 }
 
 type opsVmLogAnalyzeRowIn struct {
-	Time           string               `json:"time"`
-	Scope          string               `json:"scope"`
-	Namespace      string               `json:"namespace"`
-	Pod            string               `json:"pod"`
-	Source         string               `json:"source"`
-	Msg            string               `json:"msg"`
-	Fields         []opsVmLogAnalyzeKV  `json:"fields"`
-	Status         string               `json:"status"`
-	HasError       bool                 `json:"hasError"`
-	Priority       string               `json:"priority"`
-	PriorityReason string               `json:"priorityReason"`
+	Time           string              `json:"time"`
+	Scope          string              `json:"scope"`
+	Namespace      string              `json:"namespace"`
+	Pod            string              `json:"pod"`
+	Source         string              `json:"source"`
+	Msg            string              `json:"msg"`
+	Fields         []opsVmLogAnalyzeKV `json:"fields"`
+	Status         string              `json:"status"`
+	HasError       bool                `json:"hasError"`
+	Priority       string              `json:"priority"`
+	PriorityReason string              `json:"priorityReason"`
 }
 
 type opsVmLogAnalyzeKV struct {
@@ -298,7 +300,7 @@ type opsVmLogAnalyzeKV struct {
 }
 
 type vmlogOpenclawLLMOut struct {
-	Summary string `json:"summary"`
+	Summary   string `json:"summary"`
 	NewIssues []struct {
 		Fingerprint    string `json:"fingerprint"`
 		Title          string `json:"title"`
@@ -312,6 +314,7 @@ func handleOpsVmLogOpenclawAnalyze(app *ServerApp) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body opsVmLogOpenclawAnalyzeBody
 		_ = c.ShouldBindJSON(&body)
+		body.Category = normalizeVmLogQuerySource(body.Category)
 		if body.ClearKnownIssues {
 			if getDashboardRoleFromGin(c) != DashboardRoleAdmin {
 				RespondAPIPermissionDenied(c)
@@ -336,6 +339,7 @@ func handleOpsVmLogOpenclawAnalyze(app *ServerApp) gin.HandlerFunc {
 			Category:      body.Category,
 			K8sNamespace:  body.K8sNamespace,
 			K8sPodName:    body.K8sPodName,
+			Host:          body.Host,
 			Keyword:       body.Keyword,
 			KeywordField:  body.KeywordField,
 			WindowMinutes: body.WindowMinutes,
@@ -352,6 +356,20 @@ func handleOpsVmLogOpenclawAnalyze(app *ServerApp) gin.HandlerFunc {
 			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
+		}
+		if hostFilter := strings.ToLower(strings.TrimSpace(body.Host)); hostFilter != "" || strings.TrimSpace(body.Level) != "" {
+			scopeName := vmlogSummaryScope(body.Category)
+			filtered := make([]map[string]any, 0, len(matched))
+			for _, row := range matched {
+				if hostFilter != "" && !strings.Contains(strings.ToLower(vmlogRowHost(row)), hostFilter) {
+					continue
+				}
+				if !vmlogMatchesLevel(scopeName, body.Level, row) {
+					continue
+				}
+				filtered = append(filtered, row)
+			}
+			matched = filtered
 		}
 
 		cfg := app.Cfg()
@@ -410,7 +428,7 @@ func handleOpsVmLogOpenclawAnalyze(app *ServerApp) gin.HandlerFunc {
 		if cat == "" {
 			cat = "all"
 		}
-		userMsg := fmt.Sprintf(`筛选条件：分类=%s，k8s命名空间=%q，关键词=%q，时间窗=%d 分钟（%s ~ %s）。
+		userMsg := fmt.Sprintf(`筛选条件：分类=%s，k8s命名空间=%q，主机=%q，级别=%q，关键词=%q，时间窗=%d 分钟（%s ~ %s）。
 VictoriaLogs 拉取 %d 条原始行，过滤后匹配 %d 条；truncated=%v scanWarn=%q
 
 【已登记问题 fingerprint（禁止在 new_issues 中重复相同 fingerprint；summary 中不要复述这些问题的细节，最多一句话带过「与已登记问题一致」）】
@@ -420,7 +438,7 @@ VictoriaLogs 拉取 %d 条原始行，过滤后匹配 %d 条；truncated=%v scan
 %s
 
 请严格按系统说明只输出 JSON。`,
-			cat, body.K8sNamespace, body.Keyword, win,
+			cat, body.K8sNamespace, body.Host, body.Level, body.Keyword, win,
 			startT.Format(time.RFC3339), endT.Format(time.RFC3339),
 			totalFetched, len(matched), truncated, scanWarn,
 			strings.TrimSpace(knownLines.String()),
@@ -440,6 +458,10 @@ VictoriaLogs 拉取 %d 条原始行，过滤后匹配 %d 条；truncated=%v scan
 		if timeout <= 0 {
 			timeout = 180
 		}
+		SetAuditDetail(c, fmt.Sprintf(
+			"VictoriaLogs AI 分析：category=%s matched=%d sampleLimit=%d，发送前已脱敏",
+			cat, len(matched), body.SampleLimit,
+		))
 		rawLLM, latencyMs, cerr := opsOpenClawChatAPI(cfg, app, oc, llmBundle.AI, sys, userMsg, timeout, 8192)
 		if cerr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": cerr.Error()})
@@ -629,6 +651,11 @@ func handleOpsVmLogOpenclawAnalyzeRow(app *ServerApp) gin.HandlerFunc {
 			if k == "" || v == "" {
 				continue
 			}
+			if sensitiveLogFieldName(k) {
+				v = "[REDACTED]"
+			} else {
+				v = redactLogTextForAI(v)
+			}
 			fieldLines = append(fieldLines, fmt.Sprintf("- %s: %s", k, v))
 		}
 		if len(fieldLines) == 0 {
@@ -705,7 +732,7 @@ func handleOpsVmLogOpenclawAnalyzeRow(app *ServerApp) gin.HandlerFunc {
 			body.Row.HasError,
 			nullDash(body.Row.Priority),
 			nullDash(body.Row.PriorityReason),
-			nullDash(body.Row.Msg),
+			nullDash(redactLogTextForAI(body.Row.Msg)),
 			strings.Join(fieldLines, "\n"),
 		)
 
@@ -714,6 +741,7 @@ func handleOpsVmLogOpenclawAnalyzeRow(app *ServerApp) gin.HandlerFunc {
 		if timeout <= 0 {
 			timeout = 120
 		}
+		SetAuditDetail(c, "VictoriaLogs 单条 AI 分析：scope="+scope+"，发送前已脱敏")
 		rawLLM, latencyMs, cerr := opsOpenClawChatAPI(cfg, app, oc, llmBundle.AI, sys, userMsg, timeout, 2048)
 		if cerr != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": cerr.Error()})

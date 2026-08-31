@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, Loader2, Pencil, Radio } from "lucide-react";
@@ -50,6 +50,7 @@ import type {
   VCenterTaskStatusResponse,
   VCenterVMDetailResponse,
 } from "./types";
+import { vcenterVmDetailText } from "./vcenterVmDetail.i18n";
 
 function formatGuestIps(ips: unknown): string {
   if (ips == null) return "—";
@@ -65,6 +66,7 @@ function formatGiBFromKB(capacityKB: number): string {
 const VCenterVMDetail: React.FC = () => {
   const { moref = "" } = useParams<{ moref: string }>();
   const decoded = decodeURIComponent(moref);
+  const [activeTab, setActiveTab] = useState<"overview" | "metrics" | "ssh" | "console">("overview");
   const queryClient = useQueryClient();
 
   const detailQ = useQuery({
@@ -252,20 +254,26 @@ const VCenterVMDetail: React.FC = () => {
     taskState !== "error";
   const vmDisplayName = detailQ.data?.name?.trim() || decoded;
 
+  useEffect(() => {
+    setActiveTab("overview");
+  }, [decoded]);
+
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="mx-auto w-full max-w-[1440px] space-y-4">
+      <div className="space-y-1">
         <Link
           to="/cluster/vcenter"
-          className="mb-3 inline-flex items-center text-sm text-blue-600 hover:underline"
+          className="inline-flex items-center text-sm text-blue-600 hover:underline"
         >
           <ArrowLeft className="mr-1 h-4 w-4" />
           返回虚拟机列表
         </Link>
-        <h2 className="text-xl font-semibold text-gray-900">
-          {detailQ.data?.name || decoded}
-        </h2>
-        <p className="mt-1 font-mono text-xs text-gray-500">{decoded}</p>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="text-xl font-semibold text-gray-900">
+            {detailQ.data?.name || decoded}
+          </h2>
+          <p className="font-mono text-xs text-gray-500">{decoded}</p>
+        </div>
       </div>
 
       {detailQ.isLoading && <p className="text-gray-500">加载详情…</p>}
@@ -274,29 +282,29 @@ const VCenterVMDetail: React.FC = () => {
       )}
 
       {detailQ.data && (
-        <Tabs defaultValue="overview" className="w-full">
-          <TabsList className="mb-4 flex-wrap">
-            <TabsTrigger value="overview">概况与网络</TabsTrigger>
-            <TabsTrigger value="metrics">资源监控</TabsTrigger>
-            <TabsTrigger value="ssh">SSH 终端</TabsTrigger>
-            <TabsTrigger value="console">vSphere 控制台</TabsTrigger>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="w-full min-w-0">
+          <TabsList className="mb-2 h-auto w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-fit">
+            <TabsTrigger value="overview" className="min-h-11 shrink-0">{vcenterVmDetailText.tabs.overview}</TabsTrigger>
+            <TabsTrigger value="metrics" className="min-h-11 shrink-0">{vcenterVmDetailText.tabs.metrics}</TabsTrigger>
+            <TabsTrigger value="ssh" className="min-h-11 shrink-0">{vcenterVmDetailText.tabs.ssh}</TabsTrigger>
+            <TabsTrigger value="console" className="min-h-11 shrink-0">{vcenterVmDetailText.tabs.console}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <TabsContent value="overview" className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-xs font-medium text-gray-500">电源 / 工具</p>
                 <p className="mt-1 text-sm">
                   {detailQ.data.powerState ?? "—"}
                 </p>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-xs font-medium text-gray-500">vCPU / 内存</p>
                 <p className="mt-1 text-sm">
                   {detailQ.data.cpu ?? "—"} / {detailQ.data.memoryMB ?? "—"} MB
                 </p>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-xs font-medium text-gray-500">UUID</p>
                 <p className="mt-1 break-all font-mono text-xs">
                   {detailQ.data.uuid ?? "—"}
@@ -305,13 +313,13 @@ const VCenterVMDetail: React.FC = () => {
             </div>
 
             {isTemplate ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-950">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm text-amber-950">
                 当前虚拟机为<strong>模板</strong>，无法在此执行电源、硬件编辑或磁盘扩容。
               </div>
             ) : (
               <>
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="rounded-xl border border-gray-200 bg-white p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-xs font-medium text-gray-500">
                         电源状态
@@ -361,7 +369,7 @@ const VCenterVMDetail: React.FC = () => {
                     </div>
                   </div>
                   {showPowerProgress && (
-                    <div className="mt-4 space-y-2">
+                    <div className="mt-3 space-y-2">
                       <div className="flex items-center justify-between text-[11px] text-gray-600">
                         <span>
                           {taskStatusQ.isLoading
@@ -392,7 +400,7 @@ const VCenterVMDetail: React.FC = () => {
                 </div>
 
                 <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                  <DialogContent className="max-h-[min(90vh,720px)] max-w-lg overflow-y-auto">
+                  <DialogContent className="max-h-[min(90dvh,720px)] max-w-lg overflow-y-auto">
                     <DialogHeader>
                       <DialogTitle>编辑资源</DialogTitle>
                       <DialogDescription>
@@ -584,7 +592,7 @@ const VCenterVMDetail: React.FC = () => {
               </>
             )}
 
-            <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-900">来宾已监听端口</p>
@@ -687,7 +695,7 @@ const VCenterVMDetail: React.FC = () => {
             </div>
 
             {guest && (
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-sm font-medium text-gray-900">Guest</p>
                 <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div>
@@ -727,7 +735,7 @@ const VCenterVMDetail: React.FC = () => {
             )}
 
             {storage && (
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-sm font-medium text-gray-900">存储</p>
                 <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
                   以下为 vSphere 摘要中的三项：已提交表示当前已占用的虚拟磁盘空间；未提交表示精简置备等尚未兑现、仍可能增长的部分；未共享表示不计入共享（如链接克隆去重）的本机独占用量。三者并非简单相加关系。
@@ -759,7 +767,7 @@ const VCenterVMDetail: React.FC = () => {
             )}
 
             {Array.isArray(nets) && nets.length > 0 && (
-              <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
                 <p className="text-sm font-medium text-gray-900">
                   网卡与 IP（来自 Guest）
                 </p>
@@ -802,6 +810,7 @@ const VCenterVMDetail: React.FC = () => {
           <TabsContent value="ssh" className="space-y-4">
             <VCenterSshTerminal
               moref={decoded}
+              autoConnect
               guestIpHint={
                 guest &&
                 typeof guest.ip === "string" &&

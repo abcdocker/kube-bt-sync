@@ -24,9 +24,18 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { YamlEditor } from "@/components/YamlEditor";
+import IngressAnnotations from "@/components/IngressAnnotations";
 import { apiGetJson, apiGetText, apiPostJson, type IngressRow } from "@/lib/api";
 import { extractErrorMessage } from "@/lib/extract-error-message";
+import { ingressText } from "@/i18n/ingress";
 import { toast } from "sonner";
+
+function ingressAge(createdAt: string): string {
+  const value = createdAt ? new Date(createdAt) : null;
+  return value && !Number.isNaN(value.getTime())
+    ? formatDistanceToNow(value, { addSuffix: true, locale: zhCN })
+    : "—";
+}
 
 const IngressList: React.FC = () => {
   const queryClient = useQueryClient();
@@ -119,17 +128,17 @@ const IngressList: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 sm:gap-6">
       <PublishIngress onApplied={() => void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] })} />
 
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Ingress Rules</h1>
-          <p className="text-sm text-gray-500">
+          <p className="mt-1 text-sm leading-6 text-gray-500">
             集群内全部 Ingress；「托管」表示已打 README 中的同步注解并由 kube-bt-sync 处理。回源列展示当前宝塔代理使用的 HTTP/HTTPS、域名与端口。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: ["ingresses-all"] })}>
             <Plus className="size-4" />
             刷新列表
@@ -143,9 +152,9 @@ const IngressList: React.FC = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-t-2xl border border-b-0 border-gray-200 p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 flex-wrap items-center gap-3">
-          <div className="relative min-w-[200px] flex-1 max-w-md">
+      <div className="flex flex-col gap-4 rounded-t-2xl border border-b-0 border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+          <div className="relative min-w-0 flex-1 sm:min-w-[200px] sm:max-w-md">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -167,9 +176,76 @@ const IngressList: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-b-2xl overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
+      <div className="grid gap-3 md:hidden">
+        {isLoading ? (
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">加载中...</div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">无 Ingress</div>
+        ) : (
+          filtered.map((item) => (
+            <article
+              key={`${item.namespace}/${item.name}`}
+              className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950"
+            >
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="break-all text-sm font-bold text-gray-900 dark:text-slate-100">{item.name}</h2>
+                  <p className="mt-0.5 break-all text-xs text-gray-500 dark:text-slate-400">{item.namespace}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${item.managed ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                  {item.managed ? ingressText.managed : ingressText.unmanaged}
+                </span>
+              </div>
+
+              <dl className="mt-4 grid min-w-0 gap-3 text-xs">
+                <div className="min-w-0">
+                  <dt className="mb-1 text-gray-400">{ingressText.mobileHosts}</dt>
+                  <dd className="flex min-w-0 flex-wrap gap-1">
+                    {(item.hosts.length ? item.hosts : ["—"]).map((host) => (
+                      <span key={host} className="max-w-full break-all rounded-md bg-gray-100 px-2 py-1 font-mono text-gray-700">{host}</span>
+                    ))}
+                  </dd>
+                </div>
+                {item.managed ? (
+                  <div className="min-w-0">
+                    <dt className="mb-1 text-gray-400">{ingressText.mobileOrigin}</dt>
+                    <dd className="break-all font-mono text-blue-700">
+                      {(item.scheme || "http").toUpperCase()}://{item.upstreamHost || "—"}:{item.ddnsPort || "—"}
+                    </dd>
+                  </div>
+                ) : null}
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <dt className="text-gray-400">{ingressText.mobileClass}</dt>
+                    <dd className="break-all text-gray-700">{item.class || "—"}</dd>
+                  </div>
+                  <IngressAnnotations
+                    annotationCount={item.annotationCount}
+                    namespace={item.namespace}
+                    name={item.name}
+                    resourceName={`${item.namespace}/${item.name}`}
+                  />
+                </div>
+              </dl>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 border-t border-gray-100 pt-3">
+                <Button type="button" variant="outline" size="sm" onClick={() => void openEdit(item)}>
+                  <Pencil className="size-4" />
+                  {ingressText.edit}
+                </Button>
+                <Button type="button" variant="destructive" size="sm" onClick={() => openDeleteDialog(item)}>
+                  <Trash2 className="size-4" />
+                  {ingressText.remove}
+                </Button>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+
+      <div className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-b-2xl border border-gray-200 bg-white shadow-sm md:flex">
         <div className="overflow-auto flex-1">
-          <table className="w-full min-w-[900px] text-left border-collapse">
+          <table className="w-full min-w-[1024px] text-left border-collapse">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-gray-200">
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -188,6 +264,9 @@ const IngressList: React.FC = () => {
                   回源
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  {ingressText.annotations}
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Age
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
@@ -198,23 +277,19 @@ const IngressList: React.FC = () => {
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500 text-sm">
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500 text-sm">
                     加载中...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500 text-sm">
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500 text-sm">
                     无 Ingress
                   </td>
                 </tr>
               ) : (
                 filtered.map((item) => {
-                  const t = item.createdAt ? new Date(item.createdAt) : null;
-                  const age =
-                    t && !Number.isNaN(t.getTime())
-                      ? formatDistanceToNow(t, { addSuffix: true, locale: zhCN })
-                      : "—";
+                  const age = ingressAge(item.createdAt);
                   return (
                     <tr key={`${item.namespace}/${item.name}`} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4">
@@ -259,6 +334,14 @@ const IngressList: React.FC = () => {
                         ) : (
                           "—"
                         )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <IngressAnnotations
+                          annotationCount={item.annotationCount}
+                          namespace={item.namespace}
+                          name={item.name}
+                          resourceName={`${item.namespace}/${item.name}`}
+                        />
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">{age}</td>
                       <td className="px-6 py-4 text-right">

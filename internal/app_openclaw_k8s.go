@@ -36,12 +36,11 @@ type OpenClawK8sDeployOpts struct {
 	ServiceName    string
 	NodePort       int32
 	// ExposeMode：nodeport（0=集群随机分配 NodePort）| ingress（仅 ClusterIP，并创建 Ingress 走宝塔同步）
-	ExposeMode          string
-	IngressName         string
-	IngressHost         string
-	IngressTLSScheme    string // https | http，用于登记对外 Base URL
-	BaotaSyncAnnotation string // i4t | kube-bt
-	Image               string
+	ExposeMode       string
+	IngressName      string
+	IngressHost      string
+	IngressTLSScheme string // https | http，用于登记对外 Base URL
+	Image            string
 	// InitContainerImage init 容器镜像（拷贝 ConfigMap 到 PVC）；空则 busybox:1.36，可改为内网镜像仓库
 	InitContainerImage string
 	OpenAIAPIKey       string
@@ -527,10 +526,6 @@ func ApplyOpenClawToCluster(ctx context.Context, k8s *kubernetes.Clientset, node
 			ingName = depName + "-ingress"
 		}
 		ingResName = ingName
-		syncKey := "i4t.com/baota-sync"
-		if strings.TrimSpace(opts.BaotaSyncAnnotation) == "kube-bt" {
-			syncKey = "kube-bt-sync.io/baota-sync"
-		}
 		ic := "nginx"
 		pt := networkingv1.PathTypePrefix
 		ing := &networkingv1.Ingress{
@@ -540,7 +535,7 @@ func ApplyOpenClawToCluster(ctx context.Context, k8s *kubernetes.Clientset, node
 				Labels:    map[string]string{"app": depName, "kube-bt-sync.io/openclaw": "true"},
 				Annotations: map[string]string{
 					"kubernetes.io/ingress.class": "nginx",
-					syncKey:                       "true",
+					"kube-bt-sync.io/baota-sync":  "true",
 				},
 			},
 			Spec: networkingv1.IngressSpec{

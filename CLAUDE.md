@@ -88,7 +88,7 @@ Docker 三阶段构建：
 
 每隔 `SYNC_INTERVAL_SEC`（默认 30 秒）：
 1. 列出所有命名空间的 Ingress
-2. 过滤带有注解 `kube-bt-sync.io/baota-sync=true`（或旧版 `i4t.com/baota-sync=true`）的 Ingress
+2. 过滤带有注解 `kube-bt-sync.io/baota-sync=true` 的 Ingress
 3. 构建 `ProxyTarget{Domain, TargetURL, BaotaHTTPS, BaotaSSLCert}`
 4. 调用 Baota API 幂等创建站点和反向代理（代理名 `k8s-{domain}`）
 5. 若注解含 `baota-https=true`，追加部署证书和强制 HTTPS
@@ -116,7 +116,6 @@ UI 触发删除（`deleteBaota=true`）→ 删除反向代理 → 查站点 ID �
 | 注解键 | 说明 |
 |---|---|
 | `kube-bt-sync.io/baota-sync: "true"` | 标记为受管 Ingress（新版，推荐） |
-| `i4t.com/baota-sync: "true"` | 同上（旧版，兼容） |
 | `kube-bt-sync.io/baota-https: "true"` | 在 Baota 侧启用 HTTPS |
 | `kube-bt-sync.io/ddns-port: "PORT"` | 覆盖默认后端端口 |
 | `kube-bt-sync.io/baota-ssl-cert-name: "CERT"` | 指定 Baota 证书名 |
@@ -139,7 +138,7 @@ Web 向导（`/setup`）写入运行时 JSON，`ServerApp.Reload()` 热重载所
 | `KUBEBT_DATA_DIR` | `./data` | 持久化数据目录（挂 PVC） |
 | `BAOTA_URL` | `http://127.0.0.1:8888` | 宝塔面板地址 |
 | `BAOTA_API_KEY` | — | 宝塔 API 密钥 |
-| `DDNS_HOST` | `home.i4t.com` | 家庭公网 DDNS 域名 |
+| `DDNS_HOST` | `home.example.com` | 家庭公网 DDNS 域名 |
 | `DEFAULT_PORT` | `38333` | 默认反向代理目标端口 |
 | `SYNC_INTERVAL_SEC` | `30` | 同步间隔（秒） |
 | `INGRESS_BAOTA_SYNC_ENABLED` | `false` | **必须设为 true 才会同步** |

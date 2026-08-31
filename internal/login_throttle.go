@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	mathrand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -205,10 +206,7 @@ func handleAuthLoginChallenge(app *ServerApp) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"captchaRequired": false})
 			return
 		}
-		n1, _ := rand.Int(rand.Reader, big.NewInt(9))
-		n2, _ := rand.Int(rand.Reader, big.NewInt(9))
-		a := int(n1.Int64()) + 1
-		b := int(n2.Int64()) + 1
+		a, b := randIntOneToNine(), randIntOneToNine()
 		sum := a + b
 		id := newCaptchaID()
 		storeCaptchaAnswer(id, fmt.Sprintf("%d", sum), ip)
@@ -218,6 +216,15 @@ func handleAuthLoginChallenge(app *ServerApp) gin.HandlerFunc {
 			"question":        fmt.Sprintf("%d + %d = ?", a, b),
 		})
 	}
+}
+
+// randIntOneToNine 生成 1~9 的随机整数，优先 crypto/rand，失败时 fallback 到 math/rand。
+func randIntOneToNine() int {
+	n, err := rand.Int(rand.Reader, big.NewInt(9))
+	if err == nil && n != nil {
+		return int(n.Int64()) + 1
+	}
+	return mathrand.Intn(9) + 1
 }
 
 const securityLoginAlertFile = "security-login-alert.json"

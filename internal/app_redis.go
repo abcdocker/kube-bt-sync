@@ -73,6 +73,7 @@ type appRedisStoredConfig struct {
 	K8sStorageClass          string `json:"k8sStorageClass,omitempty"`
 	K8sTemplateID            int64  `json:"k8sTemplateId,omitempty"`
 	K8sTemplateName          string `json:"k8sTemplateName,omitempty"`
+	K8sHostNetwork           bool   `json:"k8sHostNetwork,omitempty"`
 }
 
 type appRedisRow struct {

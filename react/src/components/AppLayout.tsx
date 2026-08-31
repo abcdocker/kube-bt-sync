@@ -31,7 +31,7 @@ const AppLayout: React.FC = () => {
   return (
     <div
       data-cmp="AppLayout"
-      className="flex h-screen min-h-0 w-full min-w-0 flex-col overflow-hidden bg-[#F1F5F9] font-sans"
+      className="flex h-dvh min-h-0 w-full min-w-0 flex-col overflow-hidden bg-[#F1F5F9] font-sans"
     >
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-white shadow-custom">
         {!isDocsShell && !hideAppChrome ? <Sidebar /> : null}

@@ -43,6 +43,7 @@ export type CloudHostRow = {
   sshHost: string;
   sshPort: number;
   sshUser: string;
+  sshHostKeyFingerprint?: string;
   nodeExporterInstance?: string;
   comment?: string;
 };
@@ -74,6 +75,7 @@ type CloudHostForm = {
   sshHost: string;
   sshPort: string;
   sshUser: string;
+  sshHostKeyFingerprint: string;
   sshPassword: string;
   sshPrivateKeyPem: string;
   comment: string;
@@ -84,6 +86,7 @@ const emptyForm: CloudHostForm = {
   sshHost: "",
   sshPort: "22",
   sshUser: "",
+  sshHostKeyFingerprint: "",
   sshPassword: "",
   sshPrivateKeyPem: "",
   comment: "",
@@ -155,6 +158,7 @@ const CloudHosts: React.FC = () => {
         sshHost: form.sshHost.trim(),
         sshPort: Number.isFinite(sshPort) && sshPort > 0 ? sshPort : 22,
         sshUser: form.sshUser.trim(),
+        sshHostKeyFingerprint: form.sshHostKeyFingerprint.trim(),
         sshPassword: form.sshPassword,
         sshPrivateKeyPem: form.sshPrivateKeyPem.trim(),
         comment: form.comment.trim(),
@@ -205,6 +209,7 @@ const CloudHosts: React.FC = () => {
       sshHost: h.sshHost,
       sshPort: String(h.sshPort || 22),
       sshUser: h.sshUser || "",
+      sshHostKeyFingerprint: h.sshHostKeyFingerprint || "",
       sshPassword: "",
       sshPrivateKeyPem: "",
       comment: h.comment || "",
@@ -511,6 +516,21 @@ const CloudHosts: React.FC = () => {
                 </p>
               )}
             </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ch-host-key">SSH 主机密钥指纹</Label>
+              <Input
+                id="ch-host-key"
+                className="font-mono text-xs"
+                value={form.sshHostKeyFingerprint}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, sshHostKeyFingerprint: e.target.value }))
+                }
+                placeholder="SHA256:..."
+              />
+              <p className="text-xs text-gray-500">
+                新增主机时必填；请先在可信网络核对 ssh-keyscan / ssh-keygen 输出。
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="ch-pw">SSH 密码（可选，与私钥二选一）</Label>

@@ -35,11 +35,13 @@ func registerOpsCenterRoutes(api *gin.RouterGroup, app *ServerApp) {
 	api.POST("/ops/alerts/alertmanager-webhook/regenerate", AdminOnlyMiddleware(app), handleOpsAlertsAlertmanagerWebhookRegenerate(app))
 
 	api.GET("/ops/vmlog/status", handleOpsVmLogStatus(app))
+	api.GET("/ops/vmlog/sources", handleOpsVmLogSources())
 	api.GET("/ops/vmlog/namespaces", handleOpsVmLogNamespaces(app))
 	api.GET("/ops/vmlog/discover", handleOpsVmLogDiscover(app))
 	api.POST("/ops/vmlog/overview", handleOpsVmLogOverview(app))
 	api.POST("/ops/vmlog/details", handleOpsVmLogDetails(app))
 	api.POST("/ops/vmlog/query", handleOpsVmLogQuery(app))
+	api.POST("/ops/vmlog/search", handleOpsVmLogSearch(app))
 	api.POST("/ops/vmlog/stats", handleOpsVmLogStats(app))
 	api.POST("/ops/vmlog/openclaw-analyze", handleOpsVmLogOpenclawAnalyze(app))
 	api.POST("/ops/vmlog/openclaw-analyze-row", handleOpsVmLogOpenclawAnalyzeRow(app))
@@ -64,16 +66,16 @@ func handleOpsOpenClawGet(app *ServerApp) gin.HandlerFunc {
 		}
 		out := gin.H{
 			"openclaw": gin.H{
-				"enabled":         b.OpenClaw.Enabled,
-				"baseUrl":         b.OpenClaw.BaseURL,
-				"apiKeySet":       strings.TrimSpace(b.OpenClaw.APIKeyEnc) != "",
-				"model":           b.OpenClaw.Model,
-				"systemPrompt":    b.OpenClaw.SystemPrompt,
-				"userTemplate":    b.OpenClaw.UserTemplate,
-				"timeoutSec":      b.OpenClaw.TimeoutSec,
-				"skipTlsVerify":   b.OpenClaw.SkipTLSVerify,
-				"endpointSource":  b.OpenClaw.EndpointSource,
-				"appInstanceId":   b.OpenClaw.AppInstanceID,
+				"enabled":        b.OpenClaw.Enabled,
+				"baseUrl":        b.OpenClaw.BaseURL,
+				"apiKeySet":      strings.TrimSpace(b.OpenClaw.APIKeyEnc) != "",
+				"model":          b.OpenClaw.Model,
+				"systemPrompt":   b.OpenClaw.SystemPrompt,
+				"userTemplate":   b.OpenClaw.UserTemplate,
+				"timeoutSec":     b.OpenClaw.TimeoutSec,
+				"skipTlsVerify":  b.OpenClaw.SkipTLSVerify,
+				"endpointSource": b.OpenClaw.EndpointSource,
+				"appInstanceId":  b.OpenClaw.AppInstanceID,
 			},
 			"ai": b.AI,
 		}
@@ -126,7 +128,7 @@ type opsOpenClawPutBody struct {
 		AppInstanceID  string `json:"appInstanceId"`
 	} `json:"openclaw"`
 	OpenClawProfiles map[string]opsOpenClawPutOpenClawBody `json:"openclawProfiles"`
-	AI               OpsAIInspectConfig                      `json:"ai"`
+	AI               OpsAIInspectConfig                    `json:"ai"`
 }
 
 func handleOpsOpenClawPut(app *ServerApp) gin.HandlerFunc {
@@ -443,20 +445,20 @@ func handleOpsAlertsGet(app *ServerApp) gin.HandlerFunc {
 		chs := make([]gin.H, 0, len(b.Channels))
 		for _, ch := range b.Channels {
 			chs = append(chs, gin.H{
-				"id":           ch.ID,
-				"type":         ch.Type,
-				"smtpHost":     ch.SMTPHost,
-				"smtpPort":     ch.SMTPPort,
-				"smtpUser":     ch.SMTPUser,
-				"smtpPassSet":  strings.TrimSpace(ch.SMTPPassEnc) != "",
-				"fromAddr":     ch.FromAddr,
-				"toAddrs":      ch.ToAddrs,
-				"useTls":       ch.UseTLS,
-				"wecomWebhook": ch.WeComWebhook,
-				"wecomCorpId":       ch.WeComCorpID,
-				"wecomAgentId":      ch.WeComAgentID,
+				"id":                 ch.ID,
+				"type":               ch.Type,
+				"smtpHost":           ch.SMTPHost,
+				"smtpPort":           ch.SMTPPort,
+				"smtpUser":           ch.SMTPUser,
+				"smtpPassSet":        strings.TrimSpace(ch.SMTPPassEnc) != "",
+				"fromAddr":           ch.FromAddr,
+				"toAddrs":            ch.ToAddrs,
+				"useTls":             ch.UseTLS,
+				"wecomWebhook":       ch.WeComWebhook,
+				"wecomCorpId":        ch.WeComCorpID,
+				"wecomAgentId":       ch.WeComAgentID,
 				"wecomCorpSecretSet": strings.TrimSpace(ch.WeComCorpSecretEnc) != "",
-				"wecomToUser":       ch.WeComToUser,
+				"wecomToUser":        ch.WeComToUser,
 			})
 		}
 		out := gin.H{
@@ -477,30 +479,30 @@ func handleOpsAlertsGet(app *ServerApp) gin.HandlerFunc {
 }
 
 type opsAlertChannelIn struct {
-	ID           string `json:"id"`
-	Type         string `json:"type"`
-	SMTPHost     string `json:"smtpHost"`
-	SMTPPort     int    `json:"smtpPort"`
-	SMTPUser     string `json:"smtpUser"`
-	SMTPPassword string `json:"smtpPassword"`
-	FromAddr     string `json:"fromAddr"`
-	ToAddrs      string `json:"toAddrs"`
-	UseTLS       bool   `json:"useTls"`
-	WeComWebhook string `json:"wecomWebhook"`
-	WeComCorpID       string `json:"wecomCorpId"`
-	WeComAgentID      int    `json:"wecomAgentId"`
-	WeComCorpSecret   string `json:"wecomCorpSecret"`
-	WeComToUser       string `json:"wecomToUser"`
+	ID              string `json:"id"`
+	Type            string `json:"type"`
+	SMTPHost        string `json:"smtpHost"`
+	SMTPPort        int    `json:"smtpPort"`
+	SMTPUser        string `json:"smtpUser"`
+	SMTPPassword    string `json:"smtpPassword"`
+	FromAddr        string `json:"fromAddr"`
+	ToAddrs         string `json:"toAddrs"`
+	UseTLS          bool   `json:"useTls"`
+	WeComWebhook    string `json:"wecomWebhook"`
+	WeComCorpID     string `json:"wecomCorpId"`
+	WeComAgentID    int    `json:"wecomAgentId"`
+	WeComCorpSecret string `json:"wecomCorpSecret"`
+	WeComToUser     string `json:"wecomToUser"`
 }
 
 func handleOpsAlertsPut(app *ServerApp) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Rules                           []OpsAlertRule      `json:"rules"`
-			Channels                        []opsAlertChannelIn `json:"channels"`
-			ChannelIDs                      []string            `json:"channelIds"`
-			Silences                        []OpsAlertSilence   `json:"silences"`
-			AlertmanagerForwardToChannels   *bool               `json:"alertmanagerForwardToChannels"`
+			Rules                         []OpsAlertRule      `json:"rules"`
+			Channels                      []opsAlertChannelIn `json:"channels"`
+			ChannelIDs                    []string            `json:"channelIds"`
+			Silences                      []OpsAlertSilence   `json:"silences"`
+			AlertmanagerForwardToChannels *bool               `json:"alertmanagerForwardToChannels"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "参数无效"})
@@ -571,7 +573,7 @@ func handleOpsAlertsPut(app *ServerApp) gin.HandlerFunc {
 			Channels:                      channels,
 			ChannelIDs:                    body.ChannelIDs,
 			Silences:                      body.Silences,
-			AlertmanagerWebhookTokenEnc: cur.AlertmanagerWebhookTokenEnc,
+			AlertmanagerWebhookTokenEnc:   cur.AlertmanagerWebhookTokenEnc,
 			AlertmanagerForwardToChannels: fwd,
 		}
 		if err := saveOpsAlertCenter(app.PlatformKV(), bundle); err != nil {
