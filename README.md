@@ -103,6 +103,23 @@
 
 ### 方式一：Docker Compose 本地完整环境（推荐）
 
+在 Ubuntu 24.04 服务器上首次部署时，先安装 Docker、Compose v2 和 Git：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 git
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+```
+
+`usermod` 后退出 SSH 并重新登录，使 `docker` 组权限生效。然后克隆目标分支：
+
+```bash
+git clone --branch codex/open-source-sanitization --single-branch \
+  https://github.com/abcdocker/kube-bt-sync.git
+cd kube-bt-sync
+```
+
 ```bash
 # 仅在首次启动时执行：生成随机密码和会话/加密密钥到 .env
 bash scripts/init-compose-env.sh
@@ -114,6 +131,24 @@ docker compose ps
 ```
 
 默认访问 `http://127.0.0.1:18081/setup`。生成的 `.env` 已被 Git 忽略；请妥善保管，不要提交。停止服务使用 `docker compose down`；如需连同数据卷一起删除，显式执行 `docker compose down -v`。
+
+默认只监听回环地址。如需从局域网访问服务器，在首次启动前修改 `.env`：
+
+```dotenv
+KUBEBT_BIND_ADDRESS=0.0.0.0
+PLATFORM_PUBLIC_URL=http://<服务器IP>:18081
+```
+
+然后访问 `http://<服务器IP>:18081/setup`。不要将该 HTTP 端口直接暴露到公网；生产环境应使用防火墙、反向代理和 HTTPS。
+
+如果国内网络拉取 Docker Hub 或 `gcr.io` 超时，可在 `/etc/docker/daemon.json` 中合并信任的 Docker Hub 镜像加速地址（不要覆盖已有配置），重启 Docker，并在 `.env` 中设置：
+
+```dotenv
+BASE_RUNTIME=gcr.m.daocloud.io/distroless/static-debian12:nonroot
+GOPROXY=https://goproxy.cn,direct
+```
+
+镜像映射用法可参考 [DaoCloud public-image-mirror](https://github.com/DaoCloud/public-image-mirror)。第三方镜像服务应按组织的供应链安全策略评估后使用。
 
 Compose 默认不挂载主机 kubeconfig。首次进入 `/setup` 可先选择“不连接 Kubernetes”；如需管理真实集群，请在向导中填入专用、最小权限的 kubeconfig。
 

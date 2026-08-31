@@ -21,6 +21,8 @@ random_hex() {
 umask 077
 {
   printf 'KUBEBT_PORT=18081\n'
+  printf 'KUBEBT_BIND_ADDRESS=127.0.0.1\n'
+  printf 'PLATFORM_PUBLIC_URL=http://127.0.0.1:18081\n'
   printf 'MYSQL_DATABASE=kube_bt_sync\n'
   printf 'MYSQL_USER=kube_bt_sync\n'
   printf 'MYSQL_ROOT_PASSWORD=%s\n' "$(random_hex 24)"

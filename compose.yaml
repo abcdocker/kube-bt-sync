@@ -37,6 +37,8 @@ services:
       context: .
       args:
         BUILD_VERSION: compose
+        BASE_RUNTIME: ${BASE_RUNTIME:-gcr.io/distroless/static-debian12:nonroot}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     image: kube-bt-sync:local
     restart: unless-stopped
     depends_on:
@@ -45,7 +47,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${KUBEBT_PORT:-18081}:8080"
+      - "${KUBEBT_BIND_ADDRESS:-127.0.0.1}:${KUBEBT_PORT:-18081}:8080"
     environment:
       TZ: Asia/Shanghai
       DASHBOARD_HTTP_ADDR: :8080
@@ -54,7 +56,7 @@ services:
       DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:?run bash scripts/init-compose-env.sh first}
       KUBEBT_ENCRYPTION_KEY: ${KUBEBT_ENCRYPTION_KEY:?run bash scripts/init-compose-env.sh first}
       KUBEBT_DATA_DIR: /app/data
-      PLATFORM_PUBLIC_URL: http://127.0.0.1:${KUBEBT_PORT:-18081}
+      PLATFORM_PUBLIC_URL: ${PLATFORM_PUBLIC_URL:-http://127.0.0.1:${KUBEBT_PORT:-18081}}
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: ${MYSQL_DATABASE:-kube_bt_sync}
@@ -62,7 +64,8 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?run bash scripts/init-compose-env.sh first}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?run bash scripts/init-compose-env.sh first}
-      SSH_SETTINGS_BACKEND: mysql
+      SSH_SETTINGS_BACKEND: file
+      SSH_SETTINGS_DIR: /app/data/ssh-settings
       KUBEBT_ENABLE_BACKGROUND_JOBS: "true"
       KUBEBT_PERFORMANCE_MODE: "true"
     volumes:
