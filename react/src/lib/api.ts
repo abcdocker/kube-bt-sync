@@ -42,6 +42,8 @@ function maybeRedirectLogin(res: Response, path: string) {
   if (path.includes("/api/auth/login")) return;
   if (path.includes("/api/auth/status")) return;
   if (path.includes("/api/setup")) return;
+  // 初始化页允许在未登录状态下运行，任何后台 401 都不应打断初始化流程。
+  if (typeof window !== "undefined" && window.location.pathname === "/setup") return;
   if (typeof window !== "undefined" && window.location.pathname !== "/login") {
     window.location.assign(loginPageUrlPreservingReturn());
   }
